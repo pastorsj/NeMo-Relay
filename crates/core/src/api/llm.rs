@@ -13,7 +13,8 @@ use crate::api::runtime::NemoRelayContextState;
 use crate::api::runtime::current_scope_stack;
 use crate::api::runtime::global_context;
 use crate::api::runtime::{
-    LlmCollectorFn, LlmExecutionNextFn, LlmFinalizerFn, LlmJsonStream, LlmStreamExecutionNextFn,
+    LlmCollectorFn, LlmExecutionNextFn, LlmFinalizerFn, LlmJsonStream, LlmLifecycleContext,
+    LlmLifecycleHookFn, LlmLifecycleOutcome, LlmLifecycleRequest, LlmStreamExecutionNextFn,
 };
 use crate::api::scope::event;
 use crate::api::scope::{EmitMarkEventParams, ScopeHandle};
@@ -489,12 +490,46 @@ fn emit_llm_end_without_output(handle: &LlmHandle, metadata: Option<Json>) -> Re
     Ok(())
 }
 
+fn snapshot_llm_lifecycle_hooks() -> Result<(Vec<LlmLifecycleHookFn>, Vec<ScopeHandle>)> {
+    let scope_stack = current_scope_stack();
+    let scope_guard = scope_stack.read().expect("scope stack lock poisoned");
+    let scopes = scope_guard.scopes().to_vec();
+    let scope_locals =
+        scope_guard.collect_scope_local_registries(|registries| &registries.llm_lifecycle_hooks);
+    let context = global_context();
+    let state = context
+        .read()
+        .map_err(|error| FlowError::Internal(error.to_string()))?;
+    Ok((state.llm_lifecycle_hook_entries(&scope_locals), scopes))
+}
+
+async fn complete_llm_lifecycle_hooks(
+    hooks: &[LlmLifecycleHookFn],
+    context: &LlmLifecycleContext,
+    request: &LlmLifecycleRequest,
+    outcome: &LlmLifecycleOutcome,
+) -> Result<()> {
+    let mut first_error = None;
+    for hook in hooks.iter().rev() {
+        if let Err(error) = hook.complete(context, request, outcome).await
+            && first_error.is_none()
+        {
+            first_error = Some(error);
+        }
+    }
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
 /// Execute an LLM call through the managed middleware pipeline.
 ///
-/// This runs conditional-execution guardrails, request intercepts, and
+/// This runs conditional-execution guardrails and request intercepts, creates
+/// the LLM handle, awaits managed lifecycle preparation hooks, applies
 /// sanitize-request guardrails, emits the LLM-start event, then runs execution
-/// intercepts, the provider callback when it is not replaced, and
-/// sanitize-response guardrails in the runtime-defined order.
+/// intercepts and the provider callback. Lifecycle completion hooks observe the
+/// result before sanitize-response guardrails and the end event.
 ///
 /// # Parameters
 /// - `name`: Logical provider or model family name recorded on emitted events.
@@ -524,6 +559,10 @@ fn emit_llm_end_without_output(handle: &LlmHandle, metadata: Option<Json>) -> Re
 /// The LLM-start event is emitted before execution intercepts run. When
 /// execution fails after that point, the runtime still emits an LLM-end event
 /// without an output payload.
+///
+/// Lifecycle hooks cannot replace the provider callback. Preparation runs in
+/// ascending priority order and completion unwinds in reverse order. No
+/// registry or scope-stack lock is held while a hook future is awaited.
 ///
 /// Response codecs enrich observability output only and do not change the
 /// value returned to the caller.
@@ -600,12 +639,54 @@ pub async fn llm_call_execute(params: LlmCallExecuteParams) -> Result<Json> {
             .model_name_opt(model_name)
             .build(),
     )?;
-    emit_llm_start(
+    let (lifecycle_hooks, scopes) = snapshot_llm_lifecycle_hooks()?;
+    let lifecycle_context = LlmLifecycleContext {
+        handle: handle.clone(),
+        scopes,
+        request_codec: request_codec.clone(),
+        response_codec: response_codec.clone(),
+    };
+    let mut lifecycle_request = LlmLifecycleRequest {
+        request: intercepted_request,
+        annotated_request,
+    };
+    for (index, hook) in lifecycle_hooks.iter().enumerate() {
+        let request_before = lifecycle_request.clone();
+        match hook.prepare(&lifecycle_context, lifecycle_request).await {
+            Ok(prepared) => lifecycle_request = prepared,
+            Err(error) => {
+                let outcome = LlmLifecycleOutcome::Failure {
+                    error: error.to_string(),
+                };
+                let _ = complete_llm_lifecycle_hooks(
+                    &lifecycle_hooks[..=index],
+                    &lifecycle_context,
+                    &request_before,
+                    &outcome,
+                )
+                .await;
+                return Err(error);
+            }
+        }
+    }
+    if let Err(error) = emit_llm_start(
         &handle,
-        &intercepted_request,
-        annotated_request.clone(),
+        &lifecycle_request.request,
+        lifecycle_request.annotated_request.clone(),
         request_codec.as_deref(),
-    )?;
+    ) {
+        let outcome = LlmLifecycleOutcome::Failure {
+            error: error.to_string(),
+        };
+        let _ = complete_llm_lifecycle_hooks(
+            &lifecycle_hooks,
+            &lifecycle_context,
+            &lifecycle_request,
+            &outcome,
+        )
+        .await;
+        return Err(error);
+    }
 
     let execution = {
         let scope_stack = current_scope_stack();
@@ -619,8 +700,29 @@ pub async fn llm_call_execute(params: LlmCallExecuteParams) -> Result<Json> {
         state.llm_build_execution_chain(&name, func, &scope_locals)
     };
 
-    match execution(intercepted_request).await {
+    match execution(lifecycle_request.request.clone()).await {
         Ok(response) => {
+            let annotated_response = response_codec
+                .as_ref()
+                .and_then(|codec| codec.decode_response(&response).ok())
+                .map(Arc::new);
+            let outcome = LlmLifecycleOutcome::Success {
+                response: response.clone(),
+                annotated_response,
+            };
+            if let Err(error) = complete_llm_lifecycle_hooks(
+                &lifecycle_hooks,
+                &lifecycle_context,
+                &lifecycle_request,
+                &outcome,
+            )
+            .await
+            {
+                let end_metadata =
+                    metadata_with_otel_status(metadata, "ERROR", Some(error.to_string()));
+                let _ = emit_llm_end_without_output(&handle, end_metadata);
+                return Err(error);
+            }
             llm_call_end_with_behavior(
                 LlmCallEndParams::builder()
                     .handle(&handle)
@@ -637,6 +739,16 @@ pub async fn llm_call_execute(params: LlmCallExecuteParams) -> Result<Json> {
             Ok(response)
         }
         Err(error) => {
+            let outcome = LlmLifecycleOutcome::Failure {
+                error: error.to_string(),
+            };
+            let _ = complete_llm_lifecycle_hooks(
+                &lifecycle_hooks,
+                &lifecycle_context,
+                &lifecycle_request,
+                &outcome,
+            )
+            .await;
             let end_metadata =
                 metadata_with_otel_status(metadata, "ERROR", Some(error.to_string()));
             let _ = emit_llm_end_without_output(&handle, end_metadata);
@@ -675,6 +787,9 @@ pub async fn llm_call_execute(params: LlmCallExecuteParams) -> Result<Json> {
 /// Returns [`FlowError::GuardrailRejected`] when conditional-execution
 /// guardrails block the call, or any error raised by request intercepts,
 /// execution intercepts, stream callbacks, codecs, or the provider callback.
+/// Returns [`FlowError::InvalidArgument`] when a managed non-streaming
+/// lifecycle hook is visible; lifecycle hooks do not partially apply to
+/// streaming calls.
 ///
 /// # Notes
 /// The LLM-start event is emitted before stream execution intercepts run.
@@ -745,6 +860,13 @@ pub async fn llm_stream_call_execute(params: LlmStreamCallExecuteParams) -> Resu
     let request_codec = codec.clone();
     let (intercepted_request, annotated_request) =
         run_request_intercepts_with_codec(&name, request, codec)?;
+
+    let (lifecycle_hooks, _) = snapshot_llm_lifecycle_hooks()?;
+    if !lifecycle_hooks.is_empty() {
+        return Err(FlowError::InvalidArgument(
+            "managed LLM lifecycle hooks do not support streaming calls".into(),
+        ));
+    }
 
     let handle = create_llm_handle(
         CreateLlmHandleParams::builder()

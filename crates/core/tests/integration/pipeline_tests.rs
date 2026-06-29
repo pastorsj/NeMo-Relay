@@ -8,6 +8,7 @@
 #![allow(clippy::await_holding_lock)]
 
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use futures::StreamExt;
@@ -20,13 +21,17 @@ use nemo_relay::api::llm::{
     LlmCallExecuteParams, LlmStreamCallExecuteParams, llm_call_execute, llm_stream_call_execute,
 };
 use nemo_relay::api::registry::{
-    deregister_llm_request_intercept, deregister_llm_sanitize_request_guardrail,
-    deregister_llm_sanitize_response_guardrail, register_llm_request_intercept,
+    deregister_llm_lifecycle_hook, deregister_llm_request_intercept,
+    deregister_llm_sanitize_request_guardrail, deregister_llm_sanitize_response_guardrail,
+    register_llm_lifecycle_hook, register_llm_request_intercept,
     register_llm_sanitize_request_guardrail, register_llm_sanitize_response_guardrail,
 };
 use nemo_relay::api::runtime::NemoRelayContextState;
 use nemo_relay::api::runtime::global_context;
-use nemo_relay::api::runtime::{LlmExecutionNextFn, LlmStreamExecutionNextFn};
+use nemo_relay::api::runtime::{
+    LlmExecutionNextFn, LlmLifecycleContext, LlmLifecycleHook, LlmLifecycleOutcome,
+    LlmLifecycleRequest, LlmStreamExecutionNextFn,
+};
 use nemo_relay::api::runtime::{create_scope_stack, set_thread_scope_stack};
 use nemo_relay::api::scope::ScopeType;
 use nemo_relay::api::subscriber::{deregister_subscriber, flush_subscribers, register_subscriber};
@@ -286,6 +291,356 @@ fn noop_stream_exec_fn() -> LlmStreamExecutionNextFn {
             Ok(stream)
         })
     })
+}
+
+struct RecordingLifecycleHook {
+    id: &'static str,
+    log: Arc<Mutex<Vec<String>>>,
+    fail_prepare: bool,
+    fail_complete: bool,
+}
+
+impl LlmLifecycleHook for RecordingLifecycleHook {
+    fn prepare<'a>(
+        &'a self,
+        context: &'a LlmLifecycleContext,
+        mut request: LlmLifecycleRequest,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<LlmLifecycleRequest>> + Send + 'a>> {
+        Box::pin(async move {
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("prepare:{}", self.id));
+            assert_eq!(context.handle.name, "lifecycle-test");
+            assert!(!context.scopes.is_empty());
+            assert!(context.request_codec.is_some());
+            let order = request
+                .request
+                .content
+                .as_object_mut()
+                .unwrap()
+                .entry("hook_order")
+                .or_insert_with(|| json!([]))
+                .as_array_mut()
+                .unwrap();
+            order.push(json!(self.id));
+            if self.fail_prepare {
+                Err(FlowError::Internal(format!("prepare {} failed", self.id)))
+            } else {
+                Ok(request)
+            }
+        })
+    }
+
+    fn complete<'a>(
+        &'a self,
+        _context: &'a LlmLifecycleContext,
+        _request: &'a LlmLifecycleRequest,
+        outcome: &'a LlmLifecycleOutcome,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            let status = match outcome {
+                LlmLifecycleOutcome::Success {
+                    annotated_response, ..
+                } => {
+                    assert!(annotated_response.is_some());
+                    "success"
+                }
+                LlmLifecycleOutcome::Failure { .. } => "failure",
+            };
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("complete:{}:{status}", self.id));
+            if self.fail_complete {
+                Err(FlowError::Internal(format!("complete {} failed", self.id)))
+            } else {
+                Ok(())
+            }
+        })
+    }
+}
+
+#[tokio::test]
+async fn lifecycle_hooks_prepare_before_start_and_complete_in_reverse_order() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    reset_global();
+    setup_isolated_thread();
+
+    let log = Arc::new(Mutex::new(Vec::new()));
+    for (name, priority, id) in [
+        ("lifecycle-late", 20, "late"),
+        ("lifecycle-early", 10, "early"),
+    ] {
+        register_llm_lifecycle_hook(
+            name,
+            priority,
+            Arc::new(RecordingLifecycleHook {
+                id,
+                log: log.clone(),
+                fail_prepare: false,
+                fail_complete: false,
+            }),
+        )
+        .unwrap();
+    }
+
+    let events = Arc::new(Mutex::new(Vec::<Event>::new()));
+    let event_sink = events.clone();
+    register_subscriber(
+        "lifecycle-start-observer",
+        Arc::new(move |event| event_sink.lock().unwrap().push(event.clone())),
+    )
+    .unwrap();
+    let provider_request = Arc::new(Mutex::new(None));
+    let provider_sink = provider_request.clone();
+    let provider: LlmExecutionNextFn = Arc::new(move |request| {
+        *provider_sink.lock().unwrap() = Some(request);
+        Box::pin(async { Ok(make_openai_chat_response("done")) })
+    });
+
+    let result = llm_call_execute(
+        LlmCallExecuteParams::builder()
+            .name("lifecycle-test")
+            .request(make_openai_chat_request("hello"))
+            .func(provider)
+            .codec(Arc::new(OpenAIChatCodec))
+            .response_codec(Arc::new(OpenAIChatCodec))
+            .build(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result, make_openai_chat_response("done"));
+    assert_eq!(
+        *log.lock().unwrap(),
+        [
+            "prepare:early",
+            "prepare:late",
+            "complete:late:success",
+            "complete:early:success",
+        ]
+    );
+    let provider_request = provider_request.lock().unwrap().clone().unwrap();
+    assert_eq!(
+        provider_request.content["hook_order"],
+        json!(["early", "late"])
+    );
+    let captured = captured_events_snapshot(&events);
+    let start = captured
+        .iter()
+        .find(|event| is_scope_event(event, ScopeType::Llm, ScopeCategory::Start))
+        .unwrap();
+    assert_eq!(start.input().unwrap()["content"], provider_request.content);
+
+    deregister_subscriber("lifecycle-start-observer").unwrap();
+    deregister_llm_lifecycle_hook("lifecycle-early").unwrap();
+    deregister_llm_lifecycle_hook("lifecycle-late").unwrap();
+}
+
+#[tokio::test]
+async fn lifecycle_prepare_failure_unwinds_prepared_hooks_without_provider_execution() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    reset_global();
+    setup_isolated_thread();
+
+    let log = Arc::new(Mutex::new(Vec::new()));
+    register_llm_lifecycle_hook(
+        "lifecycle-first",
+        10,
+        Arc::new(RecordingLifecycleHook {
+            id: "first",
+            log: log.clone(),
+            fail_prepare: false,
+            fail_complete: false,
+        }),
+    )
+    .unwrap();
+    register_llm_lifecycle_hook(
+        "lifecycle-failing",
+        20,
+        Arc::new(RecordingLifecycleHook {
+            id: "failing",
+            log: log.clone(),
+            fail_prepare: true,
+            fail_complete: false,
+        }),
+    )
+    .unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_sink = calls.clone();
+    let provider: LlmExecutionNextFn = Arc::new(move |_request| {
+        calls_sink.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Ok(make_openai_chat_response("unreachable")) })
+    });
+
+    let error = llm_call_execute(
+        LlmCallExecuteParams::builder()
+            .name("lifecycle-test")
+            .request(make_openai_chat_request("hello"))
+            .func(provider)
+            .codec(Arc::new(OpenAIChatCodec))
+            .build(),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(error.to_string().contains("prepare failing failed"));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        *log.lock().unwrap(),
+        [
+            "prepare:first",
+            "prepare:failing",
+            "complete:failing:failure",
+            "complete:first:failure",
+        ]
+    );
+
+    deregister_llm_lifecycle_hook("lifecycle-first").unwrap();
+    deregister_llm_lifecycle_hook("lifecycle-failing").unwrap();
+}
+
+#[tokio::test]
+async fn lifecycle_completion_failure_unwinds_all_hooks_and_fails_the_call() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    reset_global();
+    setup_isolated_thread();
+
+    let log = Arc::new(Mutex::new(Vec::new()));
+    register_llm_lifecycle_hook(
+        "lifecycle-complete-ok",
+        10,
+        Arc::new(RecordingLifecycleHook {
+            id: "ok",
+            log: log.clone(),
+            fail_prepare: false,
+            fail_complete: false,
+        }),
+    )
+    .unwrap();
+    register_llm_lifecycle_hook(
+        "lifecycle-complete-fail",
+        20,
+        Arc::new(RecordingLifecycleHook {
+            id: "fail",
+            log: log.clone(),
+            fail_prepare: false,
+            fail_complete: true,
+        }),
+    )
+    .unwrap();
+
+    let error = llm_call_execute(
+        LlmCallExecuteParams::builder()
+            .name("lifecycle-test")
+            .request(make_openai_chat_request("hello"))
+            .func(Arc::new(|_| {
+                Box::pin(async { Ok(make_openai_chat_response("done")) })
+            }))
+            .codec(Arc::new(OpenAIChatCodec))
+            .response_codec(Arc::new(OpenAIChatCodec))
+            .build(),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(error.to_string().contains("complete fail failed"));
+    assert_eq!(
+        *log.lock().unwrap(),
+        [
+            "prepare:ok",
+            "prepare:fail",
+            "complete:fail:success",
+            "complete:ok:success",
+        ]
+    );
+
+    deregister_llm_lifecycle_hook("lifecycle-complete-ok").unwrap();
+    deregister_llm_lifecycle_hook("lifecycle-complete-fail").unwrap();
+}
+
+#[tokio::test]
+async fn lifecycle_hook_observes_provider_failure_without_replacing_it() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    reset_global();
+    setup_isolated_thread();
+
+    let log = Arc::new(Mutex::new(Vec::new()));
+    register_llm_lifecycle_hook(
+        "lifecycle-provider-failure",
+        10,
+        Arc::new(RecordingLifecycleHook {
+            id: "observer",
+            log: log.clone(),
+            fail_prepare: false,
+            fail_complete: false,
+        }),
+    )
+    .unwrap();
+
+    let error = llm_call_execute(
+        LlmCallExecuteParams::builder()
+            .name("lifecycle-test")
+            .request(make_openai_chat_request("hello"))
+            .func(Arc::new(|_| {
+                Box::pin(async { Err(FlowError::Internal("provider failed".into())) })
+            }))
+            .codec(Arc::new(OpenAIChatCodec))
+            .build(),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(error.to_string().contains("provider failed"));
+    assert_eq!(
+        *log.lock().unwrap(),
+        ["prepare:observer", "complete:observer:failure"]
+    );
+
+    deregister_llm_lifecycle_hook("lifecycle-provider-failure").unwrap();
+}
+
+#[tokio::test]
+async fn visible_non_streaming_lifecycle_hook_rejects_streaming_calls() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    reset_global();
+    setup_isolated_thread();
+
+    register_llm_lifecycle_hook(
+        "lifecycle-stream-unsupported",
+        10,
+        Arc::new(RecordingLifecycleHook {
+            id: "stream",
+            log: Arc::new(Mutex::new(Vec::new())),
+            fail_prepare: false,
+            fail_complete: false,
+        }),
+    )
+    .unwrap();
+
+    let result = llm_stream_call_execute(
+        LlmStreamCallExecuteParams::builder()
+            .name("lifecycle-test")
+            .request(make_openai_chat_request("hello"))
+            .func(noop_stream_exec_fn())
+            .collector(Box::new(|_| Ok(())))
+            .finalizer(Box::new(|| json!({})))
+            .codec(Arc::new(OpenAIChatCodec))
+            .build(),
+    )
+    .await;
+    let error = match result {
+        Err(error) => error,
+        Ok(_) => panic!("streaming call unexpectedly accepted a lifecycle hook"),
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("lifecycle hooks do not support streaming")
+    );
+
+    deregister_llm_lifecycle_hook("lifecycle-stream-unsupported").unwrap();
 }
 
 // ===========================================================================
