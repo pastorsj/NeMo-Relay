@@ -88,7 +88,15 @@ pub fn analyze_stability(
     indexed_scores.sort_by_key(|(idx, _)| *idx);
     let scores: Vec<BlockStabilityScore> =
         indexed_scores.into_iter().map(|(_, score)| score).collect();
-    let stable_prefix_length = find_stable_prefix_length(&scores);
+    let stable_prefix_length = find_stable_prefix_length(&scores).min(
+        observations
+            .iter()
+            .flat_map(|observation| observation.blocks.iter())
+            .filter(|block| block.provenance == crate::acg::prompt_ir::ProvenanceLabel::Memory)
+            .map(|block| block.sequence_index as usize)
+            .min()
+            .unwrap_or(usize::MAX),
+    );
 
     StabilityAnalysisResult {
         scores,

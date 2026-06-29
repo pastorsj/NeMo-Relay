@@ -35,6 +35,19 @@ fn block(span_id: &str, sequence_index: u32, content: &str) -> PromptBlock {
     }
 }
 
+fn memory_block(sequence_index: u32, content: &str) -> PromptBlock {
+    PromptBlock {
+        span_id: SpanId(format!("memory-{sequence_index}")),
+        sequence_index,
+        role: PromptRole::User,
+        content: content.to_string(),
+        content_type: BlockContentType::Text,
+        provenance: ProvenanceLabel::Memory,
+        sensitivity: SensitivityLabel::Private,
+        token_metadata: None,
+    }
+}
+
 #[test]
 fn stability_internal_handles_empty_inputs_variable_scores_and_zero_confidence_threshold() {
     let thresholds = StabilityThresholds::default();
@@ -77,4 +90,70 @@ fn stability_internal_effective_score_handles_zero_present_count() {
     };
 
     assert_eq!(effective_stability_score(&observations, 3), 0.0);
+}
+
+#[test]
+fn stability_never_extends_a_prefix_through_memory_provenance() {
+    let thresholds = StabilityThresholds::default();
+    let repeated = vec![
+        prompt(vec![
+            block("system-0", 0, "stable system"),
+            memory_block(1, "same memory"),
+        ]),
+        prompt(vec![
+            block("system-0", 0, "stable system"),
+            memory_block(1, "same memory"),
+        ]),
+    ];
+    let repeated_result = analyze_stability(&repeated, &thresholds);
+    assert_eq!(
+        repeated_result.scores[1].classification,
+        StabilityClass::Stable
+    );
+    assert_eq!(repeated_result.stable_prefix_length, 1);
+
+    let changing = vec![
+        prompt(vec![
+            block("system-0", 0, "stable system"),
+            memory_block(1, "memory A"),
+        ]),
+        prompt(vec![
+            block("system-0", 0, "stable system"),
+            memory_block(1, "memory B"),
+        ]),
+    ];
+    assert_eq!(
+        analyze_stability(&changing, &thresholds).stable_prefix_length,
+        1
+    );
+}
+
+#[test]
+fn stability_uses_the_earliest_memory_boundary_across_observations() {
+    let thresholds = StabilityThresholds::default();
+    let observations = vec![
+        prompt(vec![
+            block("system-0", 0, "stable system"),
+            block("system-1", 1, "stable tools"),
+            memory_block(2, "memory A"),
+        ]),
+        prompt(vec![
+            memory_block(0, "memory B"),
+            block("system-0", 1, "stable system"),
+        ]),
+    ];
+
+    assert_eq!(
+        analyze_stability(&observations, &thresholds).stable_prefix_length,
+        0
+    );
+
+    let no_memory = vec![
+        prompt(vec![block("system-0", 0, "stable")]),
+        prompt(vec![block("system-0", 0, "stable")]),
+    ];
+    assert_eq!(
+        analyze_stability(&no_memory, &thresholds).stable_prefix_length,
+        1
+    );
 }
