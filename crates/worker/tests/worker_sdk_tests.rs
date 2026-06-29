@@ -3,6 +3,7 @@
 
 //! End-to-end coverage for the Rust gRPC worker SDK service.
 
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::net::{SocketAddr, TcpListener};
 use std::path::Path;
@@ -17,6 +18,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use futures_util::{Stream, StreamExt};
 #[cfg(unix)]
 use hyper_util::rt::TokioIo;
+use nemo_relay_memory::memory::{
+    MemoryContent, MemoryNamespace, MemoryProvenance, MemoryRequestContext, MemoryStoreRequest,
+};
+use nemo_relay_memory::{InMemoryProvider, MemoryRuntime, MemoryWorkQueue, MemoryWorkQueueConfig};
 use nemo_relay_types::api::event::{BaseEvent, Event, MarkEvent};
 use nemo_relay_worker::{
     Json, JsonStream, LlmNext, LlmRequest, LlmStreamNext, PluginContext, PluginRuntime, Result,
@@ -299,6 +304,56 @@ async fn worker_shutdown_authenticates_and_awaits_plugin_cleanup() {
         ["drain memory queue", "forced failure"]
     );
 
+    handle.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn worker_shutdown_drains_an_owned_memory_queue_without_a_new_protocol() {
+    let queue = MemoryWorkQueue::new(
+        MemoryRuntime::new(InMemoryProvider::new()),
+        MemoryWorkQueueConfig::default(),
+    )
+    .expect("valid memory queue");
+    queue
+        .submit_store(MemoryStoreRequest {
+            context: MemoryRequestContext::new("worker-memory-job").expect("valid context"),
+            namespace: MemoryNamespace::new("worker-tenant", "worker-subject")
+                .expect("valid namespace"),
+            content: MemoryContent::Text {
+                text: "worker-owned background memory".into(),
+            },
+            event_timestamp: SystemTime::now().into(),
+            provenance: MemoryProvenance {
+                source: "worker_test".into(),
+                source_ids: vec!["worker-source".into()],
+                parent_memory_ids: vec![],
+                metadata: BTreeMap::new(),
+            },
+            metadata: BTreeMap::new(),
+            idempotency_key: None,
+        })
+        .await
+        .expect("memory work accepted");
+    let plugin = Arc::new(MemoryQueuePlugin {
+        queue: queue.clone(),
+    });
+    let (handle, mut client) = spawn_worker(plugin, "http://127.0.0.1:9".into()).await;
+
+    let acknowledgement = client
+        .shutdown(Request::new(ShutdownRequest {
+            activation_id: ACTIVATION_ID.into(),
+            auth_token: AUTH_TOKEN.into(),
+            reason: "host is stopping".into(),
+        }))
+        .await
+        .expect("worker shutdown returns acknowledgement")
+        .into_inner();
+
+    assert!(acknowledgement.accepted);
+    let snapshot = queue.snapshot();
+    assert!(!snapshot.accepting);
+    assert_eq!(snapshot.succeeded_total, 1);
+    assert_eq!(snapshot.last_terminal_sequence, 1);
     handle.abort();
 }
 
@@ -1240,6 +1295,32 @@ impl WorkerPlugin for MinimalPlugin {
 struct ShutdownPlugin {
     reasons: Arc<Mutex<Vec<String>>>,
     fail: Arc<AtomicBool>,
+}
+
+struct MemoryQueuePlugin {
+    queue: MemoryWorkQueue,
+}
+
+impl WorkerPlugin for MemoryQueuePlugin {
+    fn plugin_id(&self) -> &str {
+        "memory.queue.test"
+    }
+
+    fn register(&self, _ctx: &mut PluginContext, _config: &Json) -> Result<()> {
+        Ok(())
+    }
+
+    fn shutdown<'a>(
+        &'a self,
+        _reason: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            self.queue
+                .shutdown(Duration::from_secs(1))
+                .await
+                .map_err(|error| WorkerSdkError::Callback(error.to_string()))
+        })
+    }
 }
 
 impl WorkerPlugin for ShutdownPlugin {
