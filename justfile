@@ -1181,6 +1181,7 @@ package-rust:
             nemo-relay-worker)
                 cargo_package_config+=(--config 'patch.crates-io.nemo-relay-types.path="crates/types"')
                 cargo_package_config+=(--config 'patch.crates-io.nemo-relay-worker-proto.path="crates/worker-proto"')
+                cargo_package_config+=(--config 'patch.crates-io.nemo-relay-memory.path="crates/memory"')
                 ;;
             nemo-relay-plugin)
                 cargo_package_config+=(--config 'patch.crates-io.nemo-relay-types.path="crates/types"')
