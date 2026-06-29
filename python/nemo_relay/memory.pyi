@@ -44,6 +44,10 @@ class MemoryContractError(ValueError):
     error: MemoryOperationError
     def __init__(self, error: MemoryOperationError) -> None: ...
 
+class MemoryProviderError(RuntimeError):
+    error: MemoryOperationError
+    def __init__(self, error: MemoryOperationError) -> None: ...
+
 class MemoryNamespace:
     tenant_id: str
     subject_id: str
@@ -353,6 +357,63 @@ class MemoryCapabilities:
     ) -> None: ...
     @classmethod
     def from_dict(cls, data: JsonObject) -> MemoryCapabilities: ...
+    def to_dict(self) -> JsonObject: ...
+
+class MemoryMaintenanceAction(StrEnum):
+    REFLECT: MemoryMaintenanceAction
+    CONSOLIDATE: MemoryMaintenanceAction
+
+class MemoryMaintenanceWindow:
+    checkpoint_id: str
+    query: str
+    limit: int
+    previous_checkpoint_id: str | None
+    scope: MemorySearchScope
+    filter: MemoryFilter
+    def __init__(
+        self,
+        checkpoint_id: str,
+        query: str,
+        limit: int,
+        previous_checkpoint_id: str | None = None,
+        scope: MemorySearchScope = MemorySearchScope.SUBJECT,
+        filter: MemoryFilter = ...,
+    ) -> None: ...
+    def validate(self, namespace: MemoryNamespace) -> None: ...
+    @classmethod
+    def from_dict(cls, data: JsonObject, namespace: MemoryNamespace) -> MemoryMaintenanceWindow: ...
+
+class MemoryMaintenanceRequest:
+    context: MemoryRequestContext
+    namespace: MemoryNamespace
+    action: MemoryMaintenanceAction
+    window: MemoryMaintenanceWindow | None
+    parameters: JsonObject
+    def __init__(
+        self,
+        context: MemoryRequestContext,
+        namespace: MemoryNamespace,
+        action: MemoryMaintenanceAction,
+        window: MemoryMaintenanceWindow | None = None,
+        parameters: JsonObject = ...,
+    ) -> None: ...
+    def validate(self) -> None: ...
+    @classmethod
+    def from_dict(cls, data: JsonObject) -> MemoryMaintenanceRequest: ...
+    def to_dict(self) -> JsonObject: ...
+
+class MemoryMaintenanceResult:
+    job_id: str | None
+    records: tuple[MemoryRecord, ...]
+    partial_errors: tuple[MemoryOperationError, ...]
+    def __init__(
+        self,
+        job_id: str | None = None,
+        records: tuple[MemoryRecord, ...] = (),
+        partial_errors: tuple[MemoryOperationError, ...] = (),
+    ) -> None: ...
+    @classmethod
+    def from_dict(cls, data: JsonObject) -> MemoryMaintenanceResult: ...
     def to_dict(self) -> JsonObject: ...
 
 @runtime_checkable
