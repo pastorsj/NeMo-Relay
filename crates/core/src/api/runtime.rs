@@ -11,7 +11,8 @@ pub mod subscriber_dispatcher;
 
 pub use callbacks::{
     EventSubscriberFn, LlmCollectorFn, LlmConditionalFn, LlmExecutionFn, LlmExecutionNextFn,
-    LlmFinalizerFn, LlmJsonStream, LlmRequestInterceptFn, LlmSanitizeRequestFn,
+    LlmFinalizerFn, LlmJsonStream, LlmLifecycleContext, LlmLifecycleHook, LlmLifecycleHookFn,
+    LlmLifecycleOutcome, LlmLifecycleRequest, LlmRequestInterceptFn, LlmSanitizeRequestFn,
     LlmSanitizeResponseFn, LlmStreamExecutionFn, LlmStreamExecutionNextFn, ToolConditionalFn,
     ToolExecutionFn, ToolExecutionNextFn, ToolInterceptFn, ToolSanitizeFn,
 };

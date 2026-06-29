@@ -15,8 +15,11 @@ use std::sync::Arc;
 use tokio_stream::Stream;
 
 use crate::api::event::Event;
-use crate::api::llm::LlmRequest;
+use crate::api::llm::{LlmHandle, LlmRequest};
+use crate::api::scope::ScopeHandle;
 use crate::codec::request::AnnotatedLlmRequest;
+use crate::codec::response::AnnotatedLlmResponse;
+use crate::codec::traits::{LlmCodec, LlmResponseCodec};
 use crate::error::Result;
 use crate::json::Json;
 
@@ -217,6 +220,73 @@ pub type LlmExecutionFn = Arc<
         + Send
         + Sync,
 >;
+
+/// Immutable context shared with one managed LLM lifecycle hook invocation.
+#[derive(Clone)]
+pub struct LlmLifecycleContext {
+    /// Runtime-owned handle for the managed LLM call.
+    pub handle: LlmHandle,
+    /// Ordered active scopes from the implicit root to the current scope.
+    pub scopes: Vec<ScopeHandle>,
+    /// Request codec supplied to the managed call, if any.
+    pub request_codec: Option<Arc<dyn LlmCodec>>,
+    /// Response codec supplied to the managed call, if any.
+    pub response_codec: Option<Arc<dyn LlmResponseCodec>>,
+}
+
+/// Request state passed through managed LLM lifecycle preparation hooks.
+#[derive(Clone)]
+pub struct LlmLifecycleRequest {
+    /// Provider request that later middleware and the callback will receive.
+    pub request: LlmRequest,
+    /// Normalized request produced by the call's codec, when available.
+    pub annotated_request: Option<Arc<AnnotatedLlmRequest>>,
+}
+
+/// Provider outcome observed by managed LLM lifecycle completion hooks.
+#[derive(Clone)]
+pub enum LlmLifecycleOutcome {
+    /// The provider execution chain returned a response.
+    Success {
+        /// Raw response returned to the managed runtime.
+        response: Json,
+        /// Best-effort normalized response produced with the configured codec.
+        annotated_response: Option<Arc<AnnotatedLlmResponse>>,
+    },
+    /// The provider execution chain returned an error.
+    Failure {
+        /// Stable display form of the original execution error.
+        error: String,
+    },
+}
+
+/// Asynchronous observer and request preparer for a managed non-streaming LLM call.
+///
+/// Hooks cannot replace the provider continuation. They may transform the
+/// prepared request before the LLM start event and observe the final outcome.
+/// Completion is invoked in reverse preparation order, including when a later
+/// preparation hook or provider execution fails.
+pub trait LlmLifecycleHook: Send + Sync {
+    /// Prepare a request before the runtime emits the LLM start event.
+    fn prepare<'a>(
+        &'a self,
+        context: &'a LlmLifecycleContext,
+        request: LlmLifecycleRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmLifecycleRequest>> + Send + 'a>>;
+
+    /// Observe completion and release any per-call state.
+    fn complete<'a>(
+        &'a self,
+        _context: &'a LlmLifecycleContext,
+        _request: &'a LlmLifecycleRequest,
+        _outcome: &'a LlmLifecycleOutcome,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// Shared trait object stored in lifecycle-hook registries.
+pub type LlmLifecycleHookFn = Arc<dyn LlmLifecycleHook>;
 /// Stream of JSON chunks produced by the managed streaming LLM pipeline.
 pub type LlmJsonStream = Pin<Box<dyn Stream<Item = Result<Json>> + Send>>;
 /// Per-chunk collector used by the streaming LLM runtime.

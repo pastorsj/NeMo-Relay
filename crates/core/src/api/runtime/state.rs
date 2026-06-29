@@ -20,10 +20,10 @@ use crate::api::llm::{CreateLlmHandleParams, EndLlmHandleParams};
 use crate::api::llm::{LlmHandle, LlmRequest};
 use crate::api::registry::{ExecutionIntercept, Guardrail, Intercept};
 use crate::api::runtime::callbacks::{
-    EventSubscriberFn, LlmConditionalFn, LlmExecutionFn, LlmExecutionNextFn, LlmRequestInterceptFn,
-    LlmSanitizeRequestFn, LlmSanitizeResponseFn, LlmStreamExecutionFn, LlmStreamExecutionNextFn,
-    LlmStreamExecutionRegistryRefs, ToolConditionalFn, ToolExecutionFn, ToolExecutionNextFn,
-    ToolInterceptFn, ToolSanitizeFn,
+    EventSubscriberFn, LlmConditionalFn, LlmExecutionFn, LlmExecutionNextFn, LlmLifecycleHookFn,
+    LlmRequestInterceptFn, LlmSanitizeRequestFn, LlmSanitizeResponseFn, LlmStreamExecutionFn,
+    LlmStreamExecutionNextFn, LlmStreamExecutionRegistryRefs, ToolConditionalFn, ToolExecutionFn,
+    ToolExecutionNextFn, ToolInterceptFn, ToolSanitizeFn,
 };
 use crate::api::runtime::subscriber_dispatcher;
 use crate::api::scope::{CreateScopeHandleParams, EndScopeHandleParams, ScopeHandle, ScopeType};
@@ -66,6 +66,8 @@ pub struct NemoRelayContextState {
     pub(crate) llm_request_intercepts: SortedRegistry<Intercept<LlmRequestInterceptFn>>,
     /// Global non-streaming LLM execution intercepts that wrap callback execution.
     pub(crate) llm_execution_intercepts: SortedRegistry<ExecutionIntercept<LlmExecutionFn>>,
+    /// Global non-streaming managed LLM lifecycle hooks.
+    pub(crate) llm_lifecycle_hooks: SortedRegistry<ExecutionIntercept<LlmLifecycleHookFn>>,
     /// Global streaming LLM execution intercepts that wrap stream-producing callbacks.
     pub(crate) llm_stream_execution_intercepts:
         SortedRegistry<ExecutionIntercept<LlmStreamExecutionFn>>,
@@ -93,6 +95,7 @@ impl NemoRelayContextState {
             llm_conditional_execution_guardrails: SortedRegistry::new(),
             llm_request_intercepts: SortedRegistry::new(),
             llm_execution_intercepts: SortedRegistry::new(),
+            llm_lifecycle_hooks: SortedRegistry::new(),
             llm_stream_execution_intercepts: SortedRegistry::new(),
             event_subscribers: HashMap::new(),
             extensions: HashMap::new(),
@@ -1055,6 +1058,17 @@ impl NemoRelayContextState {
             }
         }
         Ok((request_value, annotated_value))
+    }
+
+    /// Snapshot managed LLM lifecycle hooks in priority order.
+    pub(crate) fn llm_lifecycle_hook_entries(
+        &self,
+        scope_locals: &[&SortedRegistry<ExecutionIntercept<LlmLifecycleHookFn>>],
+    ) -> Vec<LlmLifecycleHookFn> {
+        merge_execution_intercept_callables(&self.llm_lifecycle_hooks, scope_locals)
+            .into_iter()
+            .map(|(hook, _)| hook)
+            .collect()
     }
 
     /// Build the composed non-streaming LLM execution continuation chain.

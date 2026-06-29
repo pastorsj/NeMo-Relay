@@ -5,9 +5,9 @@
 //! intercepts, and subscribers.
 
 use crate::api::runtime::{
-    LlmConditionalFn, LlmExecutionFn, LlmRequestInterceptFn, LlmSanitizeRequestFn,
-    LlmSanitizeResponseFn, LlmStreamExecutionFn, ToolConditionalFn, ToolExecutionFn,
-    ToolInterceptFn, ToolSanitizeFn,
+    LlmConditionalFn, LlmExecutionFn, LlmLifecycleHookFn, LlmRequestInterceptFn,
+    LlmSanitizeRequestFn, LlmSanitizeResponseFn, LlmStreamExecutionFn, ToolConditionalFn,
+    ToolExecutionFn, ToolInterceptFn, ToolSanitizeFn,
 };
 use crate::api::runtime::{current_scope_stack, global_context};
 use crate::api::shared::ensure_runtime_owner;
@@ -556,6 +556,14 @@ global_intercept_registry_api!(
     LlmRequestInterceptFn
 );
 global_execution_registry_api!(
+    /// Register a global managed non-streaming LLM lifecycle hook.
+    register_llm_lifecycle_hook,
+    /// Deregister a global managed LLM lifecycle hook.
+    deregister_llm_lifecycle_hook,
+    llm_lifecycle_hooks,
+    LlmLifecycleHookFn
+);
+global_execution_registry_api!(
     /// Register a global LLM execution intercept.
     /// Execution intercepts can wrap or replace the non-streaming provider
     /// callback.
@@ -661,6 +669,14 @@ scope_intercept_registry_api!(
     scope_deregister_llm_request_intercept,
     llm_request_intercepts,
     LlmRequestInterceptFn
+);
+scope_execution_registry_api!(
+    /// Register a scope-local managed non-streaming LLM lifecycle hook.
+    scope_register_llm_lifecycle_hook,
+    /// Deregister a scope-local managed LLM lifecycle hook.
+    scope_deregister_llm_lifecycle_hook,
+    llm_lifecycle_hooks,
+    LlmLifecycleHookFn
 );
 scope_execution_registry_api!(
     /// Register a scope-local LLM execution intercept.
