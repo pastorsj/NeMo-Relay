@@ -12,13 +12,9 @@ NeMo Relay memory separates two ways of using memory:
 - **Automatic reference memory** installs a native in-memory component around
   ordinary managed LLM calls. It retrieves, injects, and writes memory without
   adding memory tools to the agent's reasoning loop.
-- **Direct provider adapters** implement the asynchronous Python
-  `MemoryProvider` contract for explicit search, store, conformance, and
-  maintenance workflows. Mem0 OSS, Hindsight, Graphiti OSS, and Cognee are
-  implemented profiles.
-- **Organizational learning** uses the separate Node.js Hivemind profile to
-  capture consented Relay traces and discover derived summaries or skills.
-  Hivemind is not presented as generic fact or vector CRUD.
+- **External provider adapters** implement the asynchronous `MemoryProvider`
+  contract in application or integration repositories. Provider SDKs do not
+  enter the default Relay package closure.
 
 The provider contract always partitions data by `tenant_id` and `subject_id`.
 Optional session and agent identity can narrow a search, but cannot broaden it.
@@ -53,24 +49,19 @@ unless a later citation or evaluator establishes that relationship.
 
 ## Direct Provider Mode
 
-Use direct adapters when an application or worker owns provider calls.
-
-```python
-from nemo_relay.memory_providers import Mem0MemoryProvider
-
-provider = Mem0MemoryProvider(config={...})
-result = await provider.search(search_request)
-```
+Use an external adapter when an application or worker owns provider calls. The
+adapter implements `MemoryProvider`, constructs its vendor client from
+application-owned configuration, and receives the same validated search and
+store DTOs. Its import path and optional dependencies belong to that integration
+repository rather than `nemo-relay`.
 
 Direct Python providers cannot currently be passed to
 `InMemoryAutomaticMemory`. That component owns a native Rust reference
 provider. A future bridge can connect the same Python contract to automatic
 execution without changing adapter semantics.
 
-Refer to [Memory Providers](/memory/providers) for installation, mappings,
-exact capabilities, conformance, and current limitations. Refer to
-[Organizational Learning with Hivemind](/memory/hivemind) for trace capture,
-workspace privacy, derived artifacts, and the two-agent flow. Refer to
+Refer to [Memory Providers](/memory/providers) for the external adapter
+boundary and current limitations. Refer to
 [Memory Runtime Design and Status](/contribute/memory-runtime-design) for the
 runtime architecture, lifecycle evidence, background queue, maintenance
 interface, and prompt-cache boundary.

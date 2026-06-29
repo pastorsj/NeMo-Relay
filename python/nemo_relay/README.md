@@ -127,27 +127,10 @@ pip install "nemo-relay[langgraph,langchain-nvidia]"
 
 #### Memory Providers
 
-Mem0 OSS, Hindsight, Graphiti OSS, and Cognee direct memory providers are
-separate optional extras:
-
-```bash
-uv add "nemo-relay[mem0]"
-uv add "nemo-relay[hindsight]"
-uv add "nemo-relay[graphiti]"
-uv add "nemo-relay[cognee]"
-
-# Or with pip
-pip install "nemo-relay[mem0]"
-pip install "nemo-relay[hindsight]"
-pip install "nemo-relay[graphiti]"
-pip install "nemo-relay[cognee]"
-```
-
-These adapters implement asynchronous search/store and supported conformance in
-`nemo_relay.memory_providers`. They are not yet bridged into the native
-automatic-memory hook. Importing the base package does not import a vendor SDK.
-The Graphiti extra covers the open-source library and is not a managed Zep
-integration.
+The package exposes provider-neutral memory DTOs and the native reference
+component at `nemo_relay.memory`. Provider-specific SDK adapters belong in
+application or integration repositories and are not installed by
+`nemo-relay`.
 
 ## Getting Started
 
@@ -212,7 +195,6 @@ The public package modules are:
 - `nemo_relay.typed`
 - `nemo_relay.codecs`
 - `nemo_relay.memory`
-- `nemo_relay.memory_providers`
 
 ### Integrations
 

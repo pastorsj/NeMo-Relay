@@ -1,315 +1,61 @@
 ---
 title: "Memory Providers"
-description: "Install and use optional memory providers and the separate Hivemind organizational-learning profile."
+description: "Understand the external adapter boundary for provider-specific memory integrations."
 position: 2
 ---
 {/* SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0 */}
 
-NeMo Relay provides optional Python adapters for Mem0 OSS, Hindsight, Graphiti
-OSS, and Cognee. Vendor SDKs are not part of the default `nemo-relay`
-installation and do not enter the Rust core dependency graph.
+NeMo Relay defines a provider-neutral asynchronous contract and deterministic
+reference provider. Provider-specific adapters live in application or
+integration repositories so vendor SDKs do not enter Relay's Python, Node.js,
+or Rust package closures.
 
-## Support Matrix
+## Adapter Contract
 
-| Profile | Tested contract | Required operations | Optional Relay capabilities | Automatic hook |
-| --- | --- | --- | --- | --- |
-| Mem0 OSS | `mem0ai>=2.0.10,<3.0.0` | Search, store | None | No; direct Python provider |
-| Hindsight | `hindsight-client>=0.8.3,<0.9.0` | Search, store | Reflect maintenance | No; direct Python provider |
-| Graphiti OSS | `graphiti-core>=0.29.2,<0.30.0` | Search, store | None | No; direct Python provider |
-| Cognee | `cognee>=1.2.2,<1.3.0` | Search, store | Delete, Consolidate maintenance | No; direct Python provider |
-| Activeloop Hivemind | Validated at `0.7.113` | Trace capture, artifact search | Summaries, skills | Yes; Node subscriber profile |
+Only `search` and `store` are required. An adapter declares optional update,
+delete, batch-store, maintenance, feedback, and health operations through
+`MemoryCapabilities`. Callers check capabilities instead of inferring behavior
+from a provider name.
 
-Hivemind is not a `MemoryProvider`. Its required operation is lifecycle trace
-capture, not arbitrary record store. Its declared generic store, update,
-delete, and vector CRUD capabilities are all false. Refer to
-[Organizational Learning with Hivemind](/memory/hivemind) for its distinct
-contract and setup.
+Every operation uses explicit tenant and subject identity. Optional session and
+agent fields can narrow a search but never broaden it. Returned records preserve
+stable identity, content or an opaque reference, event and ingestion time,
+provenance, neutral metadata, and provider-native metadata.
 
-The four `MemoryProvider` profiles run the same deterministic
-supported-conformance suite for store/search, record preservation, tenant and
-subject isolation, cross-session
-subject recall, stable ordering, process-local idempotent replay and conflict,
-metadata/time filters, typed invalid requests, and every advertised optional
-capability. Graphiti additionally has temporal-edge tests. Cognee additionally
-tests delete/re-create and Consolidate through `improve`.
+Provider adapters should run conformance cases for:
 
-The version ranges identify the SDK contracts reviewed by Relay. They are not
-a claim that every graph database, vector store, embedding model, LLM, or
-service configuration behaves identically.
+- Search and store behavior
+- Record preservation and deterministic ordering
+- Tenant and subject isolation
+- Cross-session subject recall
+- Idempotency and conflict handling
+- Metadata and time filters
+- Typed invalid requests and provider failures
+- Every advertised optional capability
 
-## Install a Provider Extra
+## Landing Boundary
 
-<Tabs>
-<Tab title="Mem0 with uv">
-```bash
-uv add "nemo-relay[mem0]"
-```
-</Tab>
-<Tab title="Mem0 with pip">
-```bash
-pip install "nemo-relay[mem0]"
-```
-</Tab>
-<Tab title="Hindsight with uv">
-```bash
-uv add "nemo-relay[hindsight]"
-```
-</Tab>
-<Tab title="Hindsight with pip">
-```bash
-pip install "nemo-relay[hindsight]"
-```
-</Tab>
-<Tab title="Graphiti with uv">
-```bash
-uv add "nemo-relay[graphiti]"
-```
-</Tab>
-<Tab title="Graphiti with pip">
-```bash
-pip install "nemo-relay[graphiti]"
-```
-</Tab>
-<Tab title="Cognee with uv">
-```bash
-uv add "nemo-relay[cognee]"
-```
-</Tab>
-<Tab title="Cognee with pip">
-```bash
-pip install "nemo-relay[cognee]"
-```
-</Tab>
-</Tabs>
+Keep vendor SDKs, deployment configuration, service clients, live checks, and
+provider-specific vocabulary outside NeMo Relay. An application can integrate
+an adapter through public managed-call, middleware, plugin, subscriber, and
+worker boundaries without changing Relay's neutral DTOs.
 
-Importing `nemo_relay` or `nemo_relay.memory_providers` does not import a vendor
-SDK. An adapter imports its SDK only when it constructs a default client.
-Applications can inject an already configured async client instead.
-
-## Mem0 OSS
-
-The Mem0 profile uses the official `AsyncMemory` API documented in
-[Async Memory](https://docs.mem0.ai/open-source/features/async-memory). It
-constructs a client from a Mem0 configuration mapping or accepts an injected
-client.
-
-```python
-from nemo_relay.memory_providers import Mem0MemoryProvider
-
-provider = Mem0MemoryProvider(config={
-    "vector_store": {...},
-    "embedder": {...},
-    "llm": {...},
-})
-```
-
-The adapter maps Relay behavior as follows:
-
-- A SHA-256-derived opaque Mem0 `user_id` includes both Relay tenant and
-  subject. Mem0 search receives that ID inside `filters`, as required by the
-  current OSS API.
-- Agent and session scopes become reserved hashed metadata filters. Supported
-  scalar exact metadata filters are also pushed down. The adapter reapplies all
-  Relay scope, metadata, and time predicates after search. A bounded over-fetch
-  means a heavily filtered request can return fewer than its requested limit.
-- Store always uses `infer=False`. One Relay store therefore creates one raw
-  Mem0 ADD and does not ask Mem0's extraction LLM to update or delete memories.
-- A reserved metadata envelope preserves the original Relay namespace,
-  content, timestamps, provenance, and metadata. Mem0's ID remains in
-  `provider_metadata.vendor_id`.
-- Update, delete, batch store, maintenance, feedback, and explicit health are
-  not advertised in this profile, even when Mem0 exposes an operation with a
-  similar name.
-
-See the official
-[OSS migration guide](https://docs.mem0.ai/platform/features/graph-memory) for
-the Mem0 2.x identity/filter rules and algorithm changes.
-
-## Hindsight
-
-The Hindsight profile uses the async `aretain`, `arecall`, and `areflect`
-methods from the official
-[Python client](https://github.com/vectorize-io/hindsight/tree/main/hindsight-clients/python).
-
-```python
-from nemo_relay.memory_providers import HindsightMemoryProvider
-
-provider = HindsightMemoryProvider(
-    base_url="http://localhost:8888",
-    api_key=None,
-)
-```
-
-You can also inject a configured `Hindsight` client. The adapter maps Relay
-behavior as follows:
-
-- One opaque Hindsight bank represents a Relay tenant and subject. Reserved
-  hashed tags narrow agent and session scopes with strict tag matching.
-- Store calls `aretain(..., retain_async=False)` and reports success only after
-  Hindsight finishes the request. A deterministic document ID provides a
-  stable retry aid.
-- Recall reconstructs the original Relay record from reserved metadata even
-  when Hindsight returns extracted fact text. Arbitrary metadata and time
-  filters are enforced locally after recall. Multiple extracted facts for the
-  same Relay document are de-duplicated by Relay record ID.
-- Reflect is the only advertised maintenance action. The adapter calls
-  `areflect(include_facts=True)`, maps exact returned fact IDs back to Relay
-  records when recall metadata permits, retains the reflection as a derived
-  memory, and records all provider fact IDs as provenance source references.
-- Hindsight Reflect accepts a query, scope, limit for evidence mapping, and
-  optional checkpoint through maintenance parameters. It rejects a Relay
-  maintenance window because Hindsight cannot enforce that window's arbitrary
-  metadata, time, and record-count boundary during native reflection.
-- Consolidate, document CRUD, bank management, feedback, and health are not
-  advertised as equivalent Relay capabilities.
-
-See [Recall](https://docs.hindsight.vectorize.io/recall/) and
-[Reflect](https://docs.hindsight.vectorize.io/reflect/) for provider-native
-ranking and reflection behavior.
-
-## Graphiti OSS
-
-The Graphiti profile targets the open-source `graphiti-core` library. It is not
-a Zep Cloud or managed Zep adapter.
-
-```python
-from nemo_relay.memory_providers import GraphitiMemoryProvider
-
-provider = GraphitiMemoryProvider(
-    uri="bolt://localhost:7687",
-    user="neo4j",
-    password="password",
-)
-```
-
-Configure the Graphiti graph database, LLM, embedder, and reranker as required
-by your deployment, or inject a client implementing `GraphitiAsyncClient`.
-Relay maps Graphiti as follows:
-
-- A short SHA-256-derived Graphiti group includes the Relay tenant and subject.
-  Raw identity does not appear in the group key. Agent and session scope is
-  reapplied after Relay reconstructs source episodes.
-- Store creates one text episode with a deterministic episode UUID. The Relay
-  record envelope is encoded in the episode name, not `source_description`, so
-  adapter control metadata is not added to the fact-extraction instructions.
-- Search uses Graphiti's ordered fact edges, resolves their source episodes,
-  and returns each Relay episode once. Relay reports reciprocal fact rank as
-  its adapter score because the basic Graphiti search returns an ordered edge
-  list, not a stable numeric confidence.
-- `provider_metadata.graph_edges` preserves edge UUIDs, facts, source and target
-  nodes, source episode UUIDs, attributes, reference time, and `valid_at`,
-  `invalid_at`, and `expired_at`. This is a current graph snapshot and can
-  change on a later recall while the Relay source record remains unchanged.
-- Update, delete, batch store, maintenance, feedback, and explicit health are
-  not advertised in the initial profile.
-
-The default SDK wrapper serializes calls that can change Graphiti's active
-driver selection. Use separate provider instances when deployment throughput
-requires independent graph clients. See Graphiti's official
-[episode quick start](https://help.getzep.com/graphiti/getting-started/quick-start)
-and [graph search](https://help.getzep.com/graphiti/working-with-data/searching)
-documentation for provider-native behavior.
+The five researched integration profiles are Mem0 OSS, Hindsight, Graphiti OSS,
+Cognee, and Activeloop Hivemind. A separate companion demo can preserve their
+provider-native graph, temporal, reflection, consolidation, summary, and skill
+semantics without presenting them as Relay package features.
 
 <Warning>
-Graphiti is the open-source temporal knowledge-graph framework. Managed Zep is
-a separate product with different SDKs, configuration, governance, and runtime
-behavior. `GraphitiMemoryProvider`, the `graphiti` extra, its tests, and its
-support claims cover Graphiti OSS only. See the upstream
-[Zep versus Graphiti](https://help.getzep.com/zep-vs-graphiti) comparison.
+Reserved adapter metadata is integrity-sensitive, not a cryptographic
+signature. Use application-owned provider partitions and prevent untrusted
+clients from writing the same reserved metadata.
 </Warning>
 
-## Cognee
+## Current Limitation
 
-The Cognee profile targets the current memory-oriented Python API:
-`remember`, `recall`, `forget`, and `improve`.
-
-```python
-from nemo_relay.memory_providers import CogneeMemoryProvider
-
-# Configure Cognee's LLM and persistence backends first.
-provider = CogneeMemoryProvider()
-```
-
-Relay maps Cognee as follows:
-
-- A short opaque dataset name includes the Relay tenant and subject. Relay
-  stores one deterministic Cognee `DataItem` UUID and preserves the canonical
-  record envelope in `external_metadata`.
-- Store calls permanent `remember` with `run_in_background=False` and
-  `self_improvement=False`. A successful Relay store therefore waits for
-  ingestion and does not implicitly run a second improvement pass.
-- Search calls `recall` with `SearchType.CHUNKS`, `auto_route=False`, and graph
-  scope. It maps chunk document IDs back to source data, deduplicates multiple
-  chunks from the same record, reapplies exact Relay filters, and reports
-  reciprocal record rank rather than inventing vendor confidence.
-- Delete verifies the source record inside the requested subject dataset,
-  calls `forget(data_id=..., dataset=...)`, and invalidates the adapter's local
-  idempotent replay only after Cognee confirms deletion.
-- Consolidate maintenance calls synchronous `improve`. Reflect is unsupported.
-  A bounded Relay maintenance window is also unsupported because Cognee
-  `improve` cannot enforce arbitrary metadata, time, and count boundaries.
-- Update, batch store, feedback, and explicit health are not advertised in this
-  profile. The default wrapper loads dataset source records to reconstruct
-  Relay metadata, so large deployments should measure that read path.
-
-The current Cognee Python documentation defines
-[`remember`](https://docs.cognee.ai/python-api/remember),
-[`recall`](https://docs.cognee.ai/python-api/recall),
-[`forget`](https://docs.cognee.ai/python-api/forget), and
-[`improve`](https://docs.cognee.ai/python-api/improve) as the primary lifecycle.
-Relay does not map the legacy lower-level `memify` name to maintenance.
-
-## Idempotency, Cancellation, and Errors
-
-Each adapter keeps a bounded, process-local idempotency ledger. Reusing the same
-key and payload on the same adapter instance returns `existing`; reusing the key
-with a different payload raises `conflict`. Stable provider-side identifiers and
-Relay metadata improve retry stability, but no profile claims distributed
-exactly-once mutation across processes. Cognee deletion removes the matching
-local replay entry so the same logical record can be created again.
-
-The adapters use native async SDK methods, enforce Relay request deadlines, and
-propagate task cancellation. A remote service might commit a request before a
-client observes cancellation, so callers should retry stores with the same
-idempotency key. Provider validation, conflict, timeout, availability, and
-unknown failures become `MemoryProviderError` values with canonical error
-codes. Error details contain safe type/status facts, not credentials, memory
-content, or response bodies.
-
-## Optional Live Checks
-
-The default test suite uses deterministic fakes and no services. Maintainers can
-run live checks explicitly:
-
-```bash
-NEMO_RELAY_RUN_MEM0_LIVE=1 \
-NEMO_RELAY_MEM0_LIVE_CONFIG=/path/to/mem0.json \
-uv run pytest python/tests/memory_providers/test_mem0_live.py
-
-NEMO_RELAY_HINDSIGHT_URL=http://localhost:8888 \
-uv run pytest python/tests/memory_providers/test_hindsight_live.py
-
-NEMO_RELAY_RUN_GRAPHITI_LIVE=1 \
-NEMO_RELAY_GRAPHITI_URI=bolt://localhost:7687 \
-uv run pytest python/tests/memory_providers/test_graphiti_live.py
-
-NEMO_RELAY_RUN_COGNEE_LIVE=1 \
-uv run pytest python/tests/memory_providers/test_cognee_live.py
-```
-
-Set `NEMO_RELAY_HINDSIGHT_API_KEY` when the Hindsight service requires it. Live
-Graphiti checks also use `NEMO_RELAY_GRAPHITI_USER` and
-`NEMO_RELAY_GRAPHITI_PASSWORD` when required. Configure the model credentials
-expected by Graphiti or Cognee before their live checks. Tests use unique
-namespaces; the Cognee check deletes its source item, while providers without a
-supported delete capability retain their test data.
-
-## Trust Boundary
-
-The reserved record envelope is integrity-sensitive provider metadata, not a
-cryptographic signature. Use Relay-owned provider partitions and prevent
-untrusted clients from writing reserved Relay record metadata. A client with
-direct write access to the same Mem0 user, Hindsight bank, Graphiti group, or
-Cognee dataset can forge or replace provider metadata regardless of Relay's API
-validation.
+The Python and Node reference automatic-memory components own native in-memory
+providers. Arbitrary language-defined adapters cannot yet be passed directly
+to those native components. External integrations can use Relay's public
+lifecycle and middleware surfaces, or a separately deployed worker, while the
+generic bridging API remains under design.

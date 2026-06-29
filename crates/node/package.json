@@ -37,10 +37,6 @@
       "types": "./memory.d.ts",
       "default": "./memory.js"
     },
-    "./hivemind": {
-      "types": "./hivemind.d.ts",
-      "default": "./hivemind.js"
-    },
     "./plugin": {
       "types": "./plugin.d.ts",
       "default": "./plugin.js"
@@ -70,8 +66,8 @@
     "triples": {}
   },
   "scripts": {
-    "build": "napi build --platform --release",
-    "build-debug": "napi build --platform",
+    "build": "napi build --platform --release && node ../../scripts/finalize-node-declarations.mjs",
+    "build-debug": "napi build --platform && node ../../scripts/finalize-node-declarations.mjs",
     "check:docstrings": "node ../../scripts/lint/check_public_docstrings.mjs node",
     "check:docstrings:wasm": "node ../../scripts/lint/check_public_docstrings.mjs wasm",
     "check:docstrings:all": "node ../../scripts/lint/check_public_docstrings.mjs all",

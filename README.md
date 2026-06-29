@@ -223,9 +223,8 @@ Relay gives those systems:
 - **Plugins** so reusable observability, guardrail, adaptive, and exporter
   behavior can be turned on from configuration.
 - **Memory** so applications can use a provider-neutral contract, automatic
-  reference memory, optional Mem0, Hindsight, Graphiti OSS, and Cognee provider
-  adapters, or the separate Hivemind organizational-learning profile while
-  keeping retrieval and write evidence distinct.
+  reference memory, and lifecycle evidence while keeping provider-specific
+  adapters in application or integration repositories.
 - **Events and subscribers** so raw ATOF, normalized ATIF, OpenTelemetry, and
   OpenInference output all come from the same runtime stream.
 

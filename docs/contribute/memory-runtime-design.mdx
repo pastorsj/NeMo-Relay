@@ -45,13 +45,6 @@ The shipped surface includes the following pieces:
   in-memory provider
 - Typed Python and Node.js reference components at `nemo_relay.memory` and
   `nemo-relay-node/memory`
-- Optional direct Python adapters for Mem0 OSS 2.x, Hindsight 0.8, Graphiti OSS
-  0.29, and Cognee 1.2 with a shared supported-conformance report and no
-  default vendor dependencies
-- Hindsight Reflect maintenance that retains a derived record and preserves
-  exact provider evidence references
-- Graphiti episode/fact retrieval with current temporal edge evidence, plus
-  Cognee forget and Consolidate-through-improve capability profiles
 - Prompt IR classification that keeps automatic memory outside the learned
   stable cache prefix
 - Hash-only memory/cache correlation in adaptive request facts and telemetry
@@ -59,11 +52,12 @@ The shipped surface includes the following pieces:
 `MemoryRuntime` still provides direct provider access only. Automatic behavior
 starts only after an application installs `MemoryComponent`,
 `InMemoryAutomaticMemory`, or the built-in `memory` plugin component. The
-following remain future work: durable/distributed queues, arbitrary Python/Node
-provider bridges into automatic execution, the Hivemind adapter, attribution
-and evaluation, and the agent UI demonstration. Streaming managed
-LLM calls reject visible lifecycle hooks instead of applying partial memory
-behavior.
+following remain future work in Relay: durable/distributed queues and
+arbitrary Python/Node provider bridges into native automatic execution.
+Provider-specific adapters, Hivemind integration, attribution and evaluation,
+and the agent UI demonstration live in a separate companion demonstration
+repository. Streaming managed LLM calls reject visible lifecycle hooks instead
+of applying partial memory behavior.
 
 ## Reference-Mode Setup
 
@@ -221,8 +215,8 @@ Select **companion memory crate plus plugin automation**.
 Serializable provider-neutral DTOs live in `nemo-relay-types`.
 `nemo-relay-memory` owns the provider contract, in-memory reference
 implementation, conformance helpers, automatic component, bounded queue, and
-maintainer lifecycle. Optional baseline adapters live in the Python package;
-additional provider profiles remain staged work.
+maintainer lifecycle. Provider-specific adapters live in application or
+integration repositories.
 The existing plugin system validates, initializes, reports, replaces, and
 clears components. Direct components expose deterministic queue drain and
 shutdown. Out-of-process plugins reuse the existing authenticated worker
@@ -231,25 +225,24 @@ shutdown RPC instead of creating a second service lifecycle.
 Python exposes the reference feature through `nemo_relay.memory`, and Node.js
 exposes it through `nemo-relay-node/memory` in their existing distributions.
 Rust, Python, and Node.js are the primary implementation targets. Provider SDKs
-remain optional extras or service adapters.
+remain external adapters or services.
 
 ## Package and Repository Boundaries
 
 | Owner | Proposed Responsibility |
 | --- | --- |
 | `nemo-relay-types` | Serializable memory DTOs, capability declarations, operation results, and event profile data shared by core, bindings, native plugins, and worker protocols. |
-| `nemo-relay-memory` | Shipped async provider contract, reference provider and maintainer, bounded local queue, automatic policy, deterministic selection, write projection, and conformance tests; future provider factories and adapters. |
+| `nemo-relay-memory` | Shipped async provider contract, reference provider and maintainer, bounded local queue, automatic policy, deterministic selection, write projection, and conformance tests. |
 | NeMo Relay core and plugin crates | Generic categorized mark support, plugin activation and cleanup hooks, scopes, middleware ordering, subscribers, and exporters. |
 | Python and Node.js distributions | Ergonomic `nemo_relay.memory` and `nemo-relay-node/memory` entry points without mandatory vendor dependencies. |
 | Optional adapters | Provider-specific SDK or service mappings, capability differences, and native metadata preservation. |
 | NeMo Relay repository | DTOs, runtime and component code, supported bindings, events, conformance tests, integration documentation, and reference examples. |
-| `nemo-agent-memory` repository | Relay benchmark adapter, pinned memory-service configurations, demo backend and agent, scripted recall scenario, evaluation output, and a thin evidence UI. |
+| Companion demo repository | Provider adapters, pinned memory-service configurations, demo backend and agent, scripted recall scenario, evaluation output, and a thin evidence UI. |
 
 The first vertical slice will not modify NeMo Agent Toolkit UI. The demo can
 reuse its interaction patterns later if a thin UI cannot communicate the
-evidence clearly. Before changing `nemo-agent-memory`, contributors must fetch
-the current remote state, read that repository's instructions, fast-forward
-safely, and create a dedicated feature branch.
+evidence clearly. The companion project is developed in its own repository and
+on a dedicated feature branch.
 
 ## Provider Contract
 
@@ -480,8 +473,10 @@ Relay keeps model-specific minimum thresholds in its capability registry.
 
 ## OSS Integration Profiles
 
-The first five profiles exercise different capability shapes. A profile can be
-useful without implementing fake CRUD parity.
+The companion demonstration project uses the first five profiles to exercise
+different capability shapes. These are integration profiles, not features or
+dependencies of the `nemo-relay` packages. A profile can be useful without
+implementing fake CRUD parity.
 
 | Profile | Initial Mapping | Capability Pressure |
 | --- | --- | --- |
@@ -496,7 +491,7 @@ it will not be presented as equivalent to a self-hosted Graphiti OSS adapter.
 
 ## Evaluation and Success Metrics
 
-The Relay evaluation harness will combine retrieval tests, end-to-end answer
+The companion evaluation harness will combine retrieval tests, end-to-end answer
 tests, runtime isolation tests, lifecycle evidence checks, and queue tests.
 [LoCoMo](https://github.com/snap-research/locomo),
 [LongMemEval](https://github.com/xiaowu0162/LongMemEval), and
@@ -537,10 +532,11 @@ Implement and validate the proposal in the following order:
    drain, idempotency, and worker-plugin operation.
 5. **Complete:** Coordinate Prompt IR placement and cache diagnostics without
    merging storage abstractions.
-6. **In progress:** Mem0, Hindsight, Graphiti OSS, and Cognee are complete;
-   Hivemind remains.
-7. Add the pinned evaluation harness and publish raw per-metric results.
-8. Build the `nemo-agent-memory` scripted two-session agent and thin evidence UI
+6. **Complete in the companion project:** Add Mem0, Hindsight, Graphiti OSS,
+   Cognee, and Hivemind profiles without adding vendor dependencies to Relay.
+7. Add the pinned evaluation harness and publish raw per-metric results in the
+   companion project.
+8. Build the companion scripted two-session agent and thin evidence UI
    showing automatic recall, storage, evidence states, and a memory-off baseline.
 9. Run binding, documentation, privacy, security, and code-quality reviews
    before proposing the API as shipped.

@@ -3,6 +3,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -15,6 +16,12 @@ const { ScopeType, LlmRequest, ScopeStack } = lib;
 // ===========================================================================
 
 describe('Type constants', () => {
+  it('generates exported recursive JSON declarations for package entry points', () => {
+    const declarations = readFileSync(new URL('../index.d.ts', import.meta.url), 'utf8');
+    assert.match(declarations, /export type Json = JsonPrimitive \| JsonObject \| JsonArray/);
+    assert.equal((declarations.match(/\/\* nemo-relay-json-types \*\//g) ?? []).length, 1);
+  });
+
   it('exports canonical non-Js binding names', () => {
     assert.equal(typeof lib.ScopeStack, 'function');
     assert.equal(typeof lib.ScopeHandle, 'function');
