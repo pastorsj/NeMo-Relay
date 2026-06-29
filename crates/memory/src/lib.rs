@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#![doc = include_str!("../README.md")]
+
 //! Provider-neutral memory interfaces and reference implementations for NeMo Relay.
 //!
 //! This crate owns provider execution behavior while [`nemo_relay_types::memory`]
@@ -9,10 +11,12 @@
 //! Dropping an operation future is the cancellation mechanism; providers must not
 //! publish partial mutations before a cancellation-safe commit point.
 
+pub mod conformance;
 pub mod in_memory;
 pub mod provider;
 pub mod runtime;
 
+pub use conformance::{ConformanceCase, ConformanceReport, run_provider_conformance};
 pub use in_memory::InMemoryProvider;
 pub use nemo_relay_types::memory;
 pub use provider::{MemoryProvider, MemoryProviderResult};
