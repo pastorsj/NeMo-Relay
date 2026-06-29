@@ -19,7 +19,7 @@ schema = ["dep:schemars"]
 [dependencies]
 bitflags = { version = "2", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-schemars = { version = "0.8", optional = true }
+schemars = { version = "0.8", features = ["chrono"], optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 typed-builder = "0.23.2"

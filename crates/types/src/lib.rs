@@ -13,6 +13,8 @@
 pub mod api;
 /// Normalized LLM request and response data types.
 pub mod codec;
+/// Provider-neutral memory operation data types.
+pub mod memory;
 /// Plugin configuration diagnostic data types.
 pub mod plugin;
 

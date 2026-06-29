@@ -1,0 +1,122 @@
+{
+  "search_request": {
+    "context": {
+      "operation_id": "search-1",
+      "deadline": "2026-06-29T12:00:01Z"
+    },
+    "namespace": {
+      "tenant_id": "tenant-demo",
+      "subject_id": "subject-alex",
+      "session_id": "session-b",
+      "agent_id": "assistant"
+    },
+    "query": "Which editor theme does Alex prefer?",
+    "scope": "subject",
+    "filter": {
+      "metadata": {
+        "category": "preference"
+      },
+      "event_after": "2026-01-01T00:00:00Z"
+    },
+    "limit": 5
+  },
+  "search_result": {
+    "matches": [
+      {
+        "record": {
+          "id": "memory-0000000000000001",
+          "provider": "in_memory",
+          "namespace": {
+            "tenant_id": "tenant-demo",
+            "subject_id": "subject-alex",
+            "session_id": "session-a",
+            "agent_id": "assistant"
+          },
+          "content": {
+            "kind": "text",
+            "text": "Alex prefers the solarized dark editor theme."
+          },
+          "event_timestamp": "2026-06-29T11:55:00Z",
+          "ingested_at": "2026-06-29T11:55:01Z",
+          "provenance": {
+            "source": "user",
+            "source_ids": [
+              "event-user-1"
+            ],
+            "metadata": {
+              "turn": 3
+            }
+          },
+          "metadata": {
+            "category": "preference"
+          },
+          "provider_metadata": {
+            "native": {
+              "collection": "demo",
+              "revision": 7
+            }
+          }
+        },
+        "score": 0.6666666666666666,
+        "rank": 1
+      }
+    ],
+    "partial_errors": [
+      {
+        "code": "provider_unavailable",
+        "message": "secondary source unavailable",
+        "retryable": true,
+        "operation_id": "search-1",
+        "provider": "secondary",
+        "details": {
+          "source": "archive"
+        }
+      }
+    ]
+  },
+  "store_result": {
+    "record": {
+      "id": "memory-0000000000000001",
+      "provider": "in_memory",
+      "namespace": {
+        "tenant_id": "tenant-demo",
+        "subject_id": "subject-alex",
+        "session_id": "session-a",
+        "agent_id": "assistant"
+      },
+      "content": {
+        "kind": "text",
+        "text": "Alex prefers the solarized dark editor theme."
+      },
+      "event_timestamp": "2026-06-29T11:55:00Z",
+      "ingested_at": "2026-06-29T11:55:01Z",
+      "provenance": {
+        "source": "user",
+        "source_ids": [
+          "event-user-1"
+        ],
+        "metadata": {
+          "turn": 3
+        }
+      },
+      "metadata": {
+        "category": "preference"
+      },
+      "provider_metadata": {
+        "native": {
+          "collection": "demo",
+          "revision": 7
+        }
+      }
+    },
+    "disposition": "existing"
+  },
+  "capabilities": {
+    "update": false,
+    "delete": false,
+    "batch_store": false,
+    "maintenance": false,
+    "feedback": false,
+    "health": false
+  }
+}
