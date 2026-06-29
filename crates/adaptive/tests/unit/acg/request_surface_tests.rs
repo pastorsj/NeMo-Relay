@@ -258,6 +258,32 @@ fn test_request_surface_openai_responses_applies_instructions_input_and_tools() 
 }
 
 #[test]
+fn prompt_ir_message_index_ignores_synthetic_memory_blocks() {
+    let mut prompt_ir = prompt_ir_for_request_surface();
+    prompt_ir.blocks.insert(
+        2,
+        PromptBlock {
+            span_id: SpanId("memory-2".to_string()),
+            sequence_index: 2,
+            role: PromptRole::User,
+            content: "private memory envelope".to_string(),
+            content_type: BlockContentType::Text,
+            provenance: ProvenanceLabel::Memory,
+            sensitivity: SensitivityLabel::Private,
+            token_metadata: None,
+        },
+    );
+    for (index, block) in prompt_ir.blocks.iter_mut().enumerate().skip(3) {
+        block.sequence_index = index as u32;
+    }
+
+    assert_eq!(super::prompt_ir_message_index(&prompt_ir, 3, true), 1);
+    assert_eq!(super::prompt_ir_message_index(&prompt_ir, 4, true), 2);
+    assert_eq!(super::prompt_ir_message_index(&prompt_ir, 3, false), 0);
+    assert_eq!(super::prompt_ir_message_index(&prompt_ir, 4, false), 1);
+}
+
+#[test]
 fn test_request_surface_resolution_and_passthrough_support_cover_matrix() {
     let chat_request = LlmRequest {
         headers: serde_json::Map::new(),

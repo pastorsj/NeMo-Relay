@@ -200,6 +200,7 @@ pub(crate) fn prompt_ir_message_index(
         .take(target_block_index + 1)
         .filter(|block| {
             block.content_type != crate::acg::prompt_ir::BlockContentType::ToolSchema
+                && block.provenance != crate::acg::prompt_ir::ProvenanceLabel::Memory
                 && (include_system_messages
                     || block.role != crate::acg::prompt_ir::PromptRole::System)
         })
