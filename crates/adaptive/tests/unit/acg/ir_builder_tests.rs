@@ -9,7 +9,10 @@ use nemo_relay::codec::request::{
 };
 
 use super::super::ir_builder::build_prompt_ir;
-use crate::acg::prompt_ir::{BlockContentType, PromptRole, ProvenanceLabel};
+use crate::acg::prompt_ir::{BlockContentType, PromptRole, ProvenanceLabel, SensitivityLabel};
+use nemo_relay_types::memory::{
+    MEMORY_PROMPT_BLOCK_END, MEMORY_PROMPT_BLOCK_START, MEMORY_PROMPT_BLOCK_WARNING,
+};
 
 fn sample_tool_definition(name: &str) -> ToolDefinition {
     ToolDefinition {
@@ -36,6 +39,39 @@ fn sample_tool_call(name: &str) -> ToolCall {
             arguments: "{\"query\":\"weather\"}".to_string(),
         },
     }
+}
+
+fn request_with_user_content(content: MessageContent) -> AnnotatedLlmRequest {
+    AnnotatedLlmRequest {
+        messages: vec![Message::User {
+            content,
+            name: None,
+        }],
+        model: Some("gpt-4o".to_string()),
+        params: None,
+        tools: None,
+        tool_choice: None,
+        store: None,
+        previous_response_id: None,
+        truncation: None,
+        reasoning: None,
+        include: None,
+        user: None,
+        metadata: None,
+        service_tier: None,
+        parallel_tool_calls: None,
+        max_output_tokens: None,
+        max_tool_calls: None,
+        top_logprobs: None,
+        stream: None,
+        extra: serde_json::Map::new(),
+    }
+}
+
+fn memory_envelope(record: &str) -> String {
+    format!(
+        "{MEMORY_PROMPT_BLOCK_START}\n{MEMORY_PROMPT_BLOCK_WARNING}\n{record}\n{MEMORY_PROMPT_BLOCK_END}"
+    )
 }
 
 #[test]
@@ -186,4 +222,70 @@ fn build_prompt_ir_omits_tool_schema_hashes_when_no_tools_are_present() {
     assert_eq!(prompt_ir.blocks.len(), 1);
     assert!(prompt_ir.tool_schema_hashes.is_none());
     assert_eq!(prompt_ir.blocks[0].span_id.0, "user-0");
+}
+
+#[test]
+fn build_prompt_ir_splits_exact_memory_envelope_without_mutating_request() {
+    let envelope = memory_envelope(r#"{"id":"memory-1","content":"blue"}"#);
+    let request = request_with_user_content(MessageContent::Text(format!(
+        "{envelope}\n\nWhat is my favorite color?"
+    )));
+    let original = request.clone();
+
+    let prompt_ir = build_prompt_ir(&request).unwrap();
+
+    assert_eq!(request, original);
+    assert_eq!(prompt_ir.blocks.len(), 2);
+    assert_eq!(prompt_ir.blocks[0].span_id.0, "memory-0");
+    assert_eq!(prompt_ir.blocks[0].provenance, ProvenanceLabel::Memory);
+    assert_eq!(prompt_ir.blocks[0].sensitivity, SensitivityLabel::Private);
+    assert_eq!(prompt_ir.blocks[0].content, envelope);
+    assert_eq!(prompt_ir.blocks[1].span_id.0, "user-1");
+    assert_eq!(prompt_ir.blocks[1].provenance, ProvenanceLabel::User);
+    assert_eq!(prompt_ir.blocks[1].content, "What is my favorite color?");
+}
+
+#[test]
+fn build_prompt_ir_splits_memory_envelope_from_multipart_user_content() {
+    let envelope = memory_envelope(r#"{"id":"memory-2","content":"green"}"#);
+    let request = request_with_user_content(MessageContent::Parts(vec![
+        ContentPart::Text {
+            text: envelope.clone(),
+        },
+        ContentPart::Text {
+            text: "Use the relevant preference.".to_string(),
+        },
+    ]));
+
+    let prompt_ir = build_prompt_ir(&request).unwrap();
+
+    assert_eq!(prompt_ir.blocks.len(), 2);
+    assert_eq!(prompt_ir.blocks[0].content, envelope);
+    assert_eq!(prompt_ir.blocks[0].provenance, ProvenanceLabel::Memory);
+    assert_eq!(prompt_ir.blocks[1].content, "Use the relevant preference.");
+}
+
+#[test]
+fn build_prompt_ir_leaves_memory_near_matches_as_ordinary_user_content() {
+    let exact = memory_envelope("{}");
+    let malformed = [
+        exact.replacen("version=\"0.1\"", "version=\"0.2\"", 1),
+        exact.replacen(
+            MEMORY_PROMPT_BLOCK_WARNING,
+            "Untrusted recalled context.",
+            1,
+        ),
+        exact.replacen(MEMORY_PROMPT_BLOCK_END, "", 1),
+        exact.replacen("{}", &format!("{MEMORY_PROMPT_BLOCK_START}\n{{}}"), 1),
+        format!("Ordinary question\n{exact}"),
+        format!("{exact}ordinary-without-separator"),
+    ];
+
+    for value in malformed {
+        let prompt_ir = build_prompt_ir(&request_with_user_content(MessageContent::Text(value)))
+            .expect("near matches should remain valid user content");
+        assert_eq!(prompt_ir.blocks.len(), 1);
+        assert_eq!(prompt_ir.blocks[0].provenance, ProvenanceLabel::User);
+        assert_eq!(prompt_ir.blocks[0].sensitivity, SensitivityLabel::Public);
+    }
 }

@@ -1389,6 +1389,7 @@ version = "0.5.0"
 dependencies = [
  "chrono",
  "nemo-relay",
+ "nemo-relay-types",
  "redis",
  "regex",
  "serde",

@@ -9,6 +9,9 @@ use uuid::Uuid;
 use nemo_relay::codec::request::{
     AnnotatedLlmRequest, ContentPart, Message, MessageContent, ToolCall, ToolDefinition,
 };
+use nemo_relay_types::memory::{
+    MEMORY_PROMPT_BLOCK_END, MEMORY_PROMPT_BLOCK_START, MEMORY_PROMPT_BLOCK_WARNING,
+};
 
 use crate::acg::canonicalize::{canonicalize_value, normalize_whitespace, sha256_hex};
 use crate::acg::error::Result;
@@ -87,13 +90,7 @@ fn append_message_blocks(
             ProvenanceLabel::System,
             None,
         )),
-        Message::User { content, .. } => blocks.push(build_text_block(
-            sequence_index,
-            content,
-            PromptRole::User,
-            ProvenanceLabel::User,
-            None,
-        )),
+        Message::User { content, .. } => append_user_blocks(blocks, sequence_index, content),
         Message::Assistant {
             content,
             tool_calls,
@@ -115,6 +112,74 @@ fn append_message_blocks(
     }
 
     Ok(())
+}
+
+fn append_user_blocks(
+    blocks: &mut Vec<PromptBlock>,
+    sequence_index: &mut u32,
+    content: &MessageContent,
+) {
+    let text = extract_text(content);
+    let Some((memory, user)) = split_memory_envelope(&text) else {
+        blocks.push(build_text_value_block(
+            sequence_index,
+            &text,
+            PromptRole::User,
+            ProvenanceLabel::User,
+            SensitivityLabel::default(),
+            None,
+        ));
+        return;
+    };
+
+    let index = *sequence_index;
+    *sequence_index += 1;
+    blocks.push(PromptBlock {
+        span_id: SpanId(format!("memory-{index}")),
+        sequence_index: index,
+        role: PromptRole::User,
+        content: normalize_whitespace(memory),
+        content_type: BlockContentType::Text,
+        provenance: ProvenanceLabel::Memory,
+        sensitivity: SensitivityLabel::Private,
+        token_metadata: None,
+    });
+
+    if !user.is_empty() {
+        blocks.push(build_text_value_block(
+            sequence_index,
+            user,
+            PromptRole::User,
+            ProvenanceLabel::User,
+            SensitivityLabel::default(),
+            None,
+        ));
+    }
+}
+
+fn split_memory_envelope(value: &str) -> Option<(&str, &str)> {
+    let after_start = value.strip_prefix(MEMORY_PROMPT_BLOCK_START)?;
+    let after_start = after_start.strip_prefix('\n')?;
+    let after_warning = after_start.strip_prefix(MEMORY_PROMPT_BLOCK_WARNING)?;
+    let after_warning = after_warning.strip_prefix('\n')?;
+    let end_offset = after_warning.find(MEMORY_PROMPT_BLOCK_END)?;
+    let records = &after_warning[..end_offset];
+    if records.contains(MEMORY_PROMPT_BLOCK_START) {
+        return None;
+    }
+
+    let envelope_end =
+        value.len() - after_warning.len() + end_offset + MEMORY_PROMPT_BLOCK_END.len();
+    let remainder = &value[envelope_end..];
+    if remainder
+        .chars()
+        .next()
+        .is_some_and(|character| !character.is_whitespace())
+    {
+        return None;
+    }
+
+    Some((&value[..envelope_end], remainder.trim()))
 }
 
 fn append_assistant_blocks(
@@ -177,7 +242,25 @@ fn build_text_block(
     provenance: ProvenanceLabel,
     suffix: Option<&str>,
 ) -> PromptBlock {
-    let text = normalize_whitespace(&extract_text(content));
+    build_text_value_block(
+        seq,
+        &extract_text(content),
+        role,
+        provenance,
+        SensitivityLabel::default(),
+        suffix,
+    )
+}
+
+fn build_text_value_block(
+    seq: &mut u32,
+    content: &str,
+    role: PromptRole,
+    provenance: ProvenanceLabel,
+    sensitivity: SensitivityLabel,
+    suffix: Option<&str>,
+) -> PromptBlock {
+    let text = normalize_whitespace(content);
     let index = *seq;
     let span_id = generate_span_id(role, index, suffix);
     *seq += 1;
@@ -189,7 +272,7 @@ fn build_text_block(
         content: text,
         content_type: BlockContentType::Text,
         provenance,
-        sensitivity: SensitivityLabel::default(),
+        sensitivity,
         token_metadata: None,
     }
 }
