@@ -3,9 +3,10 @@
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Protocol, runtime_checkable
+from types import TracebackType
+from typing import Protocol, Self, runtime_checkable
 
-from nemo_relay import Json, JsonObject
+from nemo_relay import Json, JsonObject, ScopeHandle
 
 DEFAULT_SEARCH_LIMIT: int
 MAX_SEARCH_LIMIT: int
@@ -66,6 +67,65 @@ class MemorySearchScope(StrEnum):
     SESSION: MemorySearchScope
     EXACT: MemorySearchScope
     def validate(self, namespace: MemoryNamespace) -> None: ...
+
+class FailurePolicy(StrEnum):
+    FAIL_OPEN: FailurePolicy
+    FAIL_CLOSED: FailurePolicy
+
+class EvidenceMode(StrEnum):
+    REFERENCES: EvidenceMode
+
+class WriteProjection(StrEnum):
+    USER: WriteProjection
+    USER_AND_ASSISTANT: WriteProjection
+
+class AutomaticMemoryConfig:
+    namespace: MemoryNamespace | None
+    search_scope: MemorySearchScope
+    max_candidates: int
+    max_items: int
+    max_estimated_tokens: int
+    operation_timeout_millis: int
+    identity_policy: FailurePolicy
+    retrieval_policy: FailurePolicy
+    storage_policy: FailurePolicy
+    write_projection: WriteProjection
+    evidence_mode: EvidenceMode
+    def __init__(
+        self,
+        namespace: MemoryNamespace | None = None,
+        search_scope: MemorySearchScope = MemorySearchScope.SUBJECT,
+        max_candidates: int = 20,
+        max_items: int = 5,
+        max_estimated_tokens: int = 512,
+        operation_timeout_millis: int = 2_000,
+        identity_policy: FailurePolicy = FailurePolicy.FAIL_CLOSED,
+        retrieval_policy: FailurePolicy = FailurePolicy.FAIL_OPEN,
+        storage_policy: FailurePolicy = FailurePolicy.FAIL_OPEN,
+        write_projection: WriteProjection = WriteProjection.USER_AND_ASSISTANT,
+        evidence_mode: EvidenceMode = EvidenceMode.REFERENCES,
+    ) -> None: ...
+    def to_dict(self) -> JsonObject: ...
+
+class InMemoryAutomaticMemory:
+    def __init__(self, config: AutomaticMemoryConfig | None = None) -> None: ...
+    @property
+    def active_turns(self) -> int: ...
+    def install(
+        self,
+        *,
+        name: str = "automatic_memory",
+        priority: int = 0,
+        scope: ScopeHandle | None = None,
+    ) -> Self: ...
+    def close(self) -> bool: ...
+    def __enter__(self) -> Self: ...
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None: ...
 
 class MemoryContent:
     kind: str

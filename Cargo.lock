@@ -1518,6 +1518,7 @@ dependencies = [
  "chrono",
  "nemo-relay",
  "nemo-relay-adaptive",
+ "nemo-relay-memory",
  "nemo-relay-pii-redaction",
  "pyo3",
  "pyo3-async-runtimes",

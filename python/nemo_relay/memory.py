@@ -13,9 +13,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields, is_dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import NoReturn, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, NoReturn, Protocol, Self, cast, runtime_checkable
 
 from nemo_relay import Json, JsonObject
+from nemo_relay._native import _NativeInMemoryAutomaticMemory
+
+if TYPE_CHECKING:
+    from nemo_relay import ScopeHandle
 
 DEFAULT_SEARCH_LIMIT = 10
 MAX_SEARCH_LIMIT = 1_000
@@ -118,6 +122,94 @@ class MemorySearchScope(StrEnum):
             _raise_invalid("agent scope requires agent_id")
         if self is MemorySearchScope.SESSION and namespace.session_id is None:
             _raise_invalid("session scope requires session_id")
+
+
+class FailurePolicy(StrEnum):
+    """Failure behavior for one automatic-memory stage."""
+
+    FAIL_OPEN = "fail_open"
+    FAIL_CLOSED = "fail_closed"
+
+
+class EvidenceMode(StrEnum):
+    """Supported memory evidence capture mode."""
+
+    REFERENCES = "references"
+
+
+class WriteProjection(StrEnum):
+    """Completed-turn content written by automatic memory."""
+
+    USER = "user"
+    USER_AND_ASSISTANT = "user_and_assistant"
+
+
+@dataclass(frozen=True, slots=True)
+class AutomaticMemoryConfig:
+    """Validated configuration delegated to the native automatic component."""
+
+    namespace: MemoryNamespace | None = None
+    search_scope: MemorySearchScope = MemorySearchScope.SUBJECT
+    max_candidates: int = 20
+    max_items: int = 5
+    max_estimated_tokens: int = 512
+    operation_timeout_millis: int = 2_000
+    identity_policy: FailurePolicy = FailurePolicy.FAIL_CLOSED
+    retrieval_policy: FailurePolicy = FailurePolicy.FAIL_OPEN
+    storage_policy: FailurePolicy = FailurePolicy.FAIL_OPEN
+    write_projection: WriteProjection = WriteProjection.USER_AND_ASSISTANT
+    evidence_mode: EvidenceMode = EvidenceMode.REFERENCES
+
+    def to_dict(self) -> JsonObject:
+        """Encode the native snake-case configuration shape."""
+        return cast(JsonObject, _to_wire(self))
+
+
+class InMemoryAutomaticMemory:
+    """Dependency-free automatic memory for normal managed LLM calls.
+
+    This reference implementation owns a native Rust in-memory provider. Python
+    ``MemoryProvider`` implementations are not bridged into automatic execution
+    yet; they remain the adapter contract for later provider work.
+    """
+
+    def __init__(self, config: AutomaticMemoryConfig | None = None) -> None:
+        self._native = _NativeInMemoryAutomaticMemory(None if config is None else config.to_dict())
+        self._installed = False
+
+    @property
+    def active_turns(self) -> int:
+        """Return prepared calls still awaiting lifecycle completion."""
+        return self._native.active_turns
+
+    def install(
+        self,
+        *,
+        name: str = "automatic_memory",
+        priority: int = 0,
+        scope: ScopeHandle | None = None,
+    ) -> Self:
+        """Install globally, or only within ``scope`` when supplied."""
+        self._native.install(name, priority, scope)
+        self._installed = True
+        return self
+
+    def close(self) -> bool:
+        """Deregister once and return whether an active registration was removed."""
+        try:
+            return self._native.close()
+        finally:
+            self._installed = False
+
+    def __enter__(self) -> Self:
+        """Install globally on context entry when not already installed."""
+        if not self._installed:
+            self.install()
+        return self
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        """Close the installation on context exit."""
+        self.close()
 
 
 @dataclass(frozen=True, slots=True)
@@ -605,7 +697,11 @@ def _require_int(data: JsonObject, key: str) -> int:
 
 
 __all__ = [
+    "AutomaticMemoryConfig",
     "DEFAULT_SEARCH_LIMIT",
+    "EvidenceMode",
+    "FailurePolicy",
+    "InMemoryAutomaticMemory",
     "MAX_SEARCH_LIMIT",
     "MemoryCapabilities",
     "MemoryContent",
@@ -625,4 +721,5 @@ __all__ = [
     "MemoryStoreDisposition",
     "MemoryStoreRequest",
     "MemoryStoreResult",
+    "WriteProjection",
 ]

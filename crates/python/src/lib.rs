@@ -22,6 +22,7 @@
 //! - `convert` — JSON ↔ Python conversion utilities
 use nemo_relay::shared_runtime::initialize_shared_runtime_binding;
 use nemo_relay_adaptive::plugin_component::register_adaptive_component;
+use nemo_relay_memory::register_memory_component;
 use nemo_relay_pii_redaction::component::register_pii_redaction_component;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
@@ -33,6 +34,7 @@ pub mod py_adaptive;
 pub mod py_api;
 mod py_callable;
 mod py_context;
+mod py_memory;
 #[doc(hidden)]
 pub mod py_plugin;
 mod py_storage;
@@ -59,10 +61,16 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
             "failed to register PII redaction plugin component: {e}"
         ))
     })?;
+    register_memory_component().map_err(|e| {
+        pyo3::exceptions::PyRuntimeError::new_err(format!(
+            "failed to register memory plugin component: {e}"
+        ))
+    })?;
     py_types::register(m)?;
     py_api::register(m)?;
     py_plugin::register(m)?;
     py_adaptive::register(m)?;
+    py_memory::register(m)?;
     Ok(())
 }
 

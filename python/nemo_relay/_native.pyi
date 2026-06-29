@@ -1061,6 +1061,28 @@ class AnthropicMessagesCodec:
         """Decode an Anthropic response into a normalized response view."""
         ...
 
+class _NativeInMemoryAutomaticMemory:
+    """Native owner for the dependency-free automatic-memory component."""
+
+    def __init__(self, config: object | None = None) -> None:
+        """Create an isolated in-memory provider with validated native config."""
+        ...
+    @property
+    def active_turns(self) -> int:
+        """Return prepared calls still awaiting lifecycle completion."""
+        ...
+    def install(
+        self,
+        name: str = "automatic_memory",
+        priority: int = 0,
+        scope: ScopeHandle | None = None,
+    ) -> None:
+        """Install globally or on one active scope."""
+        ...
+    def close(self) -> bool:
+        """Deregister the owned installation once."""
+        ...
+
 class AdaptiveRuntime:
     """Hosted adaptive runtime bridge implemented by the native extension.
 
