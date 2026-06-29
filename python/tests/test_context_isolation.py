@@ -45,6 +45,36 @@ def test_get_scope_stack_different_across_tasks():
     assert results["a"] != results["b"], "Tasks should have different scope stacks"
 
 
+async def test_concurrent_scope_context_managers_restore_their_task_stack_before_exit():
+    first_entered = asyncio.Event()
+    second_entered = asyncio.Event()
+    allow_second_exit = asyncio.Event()
+
+    async def first():
+        token = nemo_relay._scope_stack_var.set(nemo_relay.create_scope_stack())
+        try:
+            with nemo_relay.scope.scope("first", nemo_relay.ScopeType.Agent):
+                first_entered.set()
+                await second_entered.wait()
+            assert nemo_relay.scope.get_handle().name == "root"
+        finally:
+            allow_second_exit.set()
+            nemo_relay._scope_stack_var.reset(token)
+
+    async def second():
+        await first_entered.wait()
+        token = nemo_relay._scope_stack_var.set(nemo_relay.create_scope_stack())
+        try:
+            with nemo_relay.scope.scope("second", nemo_relay.ScopeType.Agent):
+                second_entered.set()
+                await allow_second_exit.wait()
+            assert nemo_relay.scope.get_handle().name == "root"
+        finally:
+            nemo_relay._scope_stack_var.reset(token)
+
+    await asyncio.gather(first(), second())
+
+
 def test_scope_stack_repr():
     """ScopeStack has a meaningful repr."""
     stack = nemo_relay.create_scope_stack()

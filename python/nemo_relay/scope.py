@@ -306,6 +306,7 @@ def scope(
             metadata = {"otel.status_code": status_code}
             if status_message is not None:
                 metadata["otel.status_description"] = status_message
+            _ensure_scope_stack()
             _native_pop_scope(pushed_handle, metadata=metadata, timestamp=end_timestamp)
 
 
