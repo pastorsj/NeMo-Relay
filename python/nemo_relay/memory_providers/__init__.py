@@ -12,5 +12,12 @@ from nemo_relay.memory_providers.conformance import (
     ConformanceReport,
     run_provider_conformance,
 )
+from nemo_relay.memory_providers.mem0 import Mem0AsyncClient, Mem0MemoryProvider
 
-__all__ = ["ConformanceCase", "ConformanceReport", "run_provider_conformance"]
+__all__ = [
+    "ConformanceCase",
+    "ConformanceReport",
+    "Mem0AsyncClient",
+    "Mem0MemoryProvider",
+    "run_provider_conformance",
+]

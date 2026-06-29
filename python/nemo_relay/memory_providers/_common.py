@@ -152,6 +152,11 @@ def reconstruct_record(
             MemoryErrorCode.INTERNAL,
             "provider result contains a record for another adapter",
         )
+    return record_with_provider_metadata(record, provider_metadata or {})
+
+
+def record_with_provider_metadata(record: MemoryRecord, provider_metadata: JsonObject) -> MemoryRecord:
+    """Return a record with stable provider-owned identity facts attached."""
     return MemoryRecord(
         id=record.id,
         provider=record.provider,
@@ -161,7 +166,7 @@ def reconstruct_record(
         ingested_at=record.ingested_at,
         provenance=record.provenance,
         metadata=record.metadata,
-        provider_metadata=provider_metadata or {},
+        provider_metadata=provider_metadata,
     )
 
 

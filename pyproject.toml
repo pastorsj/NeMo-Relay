@@ -101,6 +101,9 @@ package = true
 [tool.pytest.ini_options]
 testpaths = ["python/tests", "third_party/langgraph_tests"]
 asyncio_mode = "auto"
+markers = [
+    "live_memory: opt-in live memory provider tests that require external SDKs or services",
+]
 
 [tool.coverage.run]
 # Exclude integration tests from coverage, since we don't run these by default

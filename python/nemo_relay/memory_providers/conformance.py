@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+
 from nemo_relay.memory import (
     MemoryCapabilities,
     MemoryContent,
@@ -28,6 +29,7 @@ from nemo_relay.memory import (
     MemoryStoreDisposition,
     MemoryStoreRequest,
 )
+
 
 @dataclass(frozen=True, slots=True)
 class ConformanceCase:
