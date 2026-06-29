@@ -100,6 +100,19 @@ pub trait WorkerPlugin: Send + Sync + 'static {
 
     /// Registers callbacks into the worker context.
     fn register(&self, ctx: &mut PluginContext, config: &Json) -> Result<()>;
+
+    /// Drains plugin-owned background work before the host terminates the worker.
+    ///
+    /// The existing worker protocol supplies the shutdown reason. Implementors
+    /// that own queues or schedulers should stop admission and await their
+    /// bounded drain here. The default succeeds immediately for source
+    /// compatibility with workers that have no background lifecycle.
+    fn shutdown<'a>(
+        &'a self,
+        _reason: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 type SubscriberFn = Arc<dyn Fn(&Event) + Send + Sync>;
@@ -989,10 +1002,17 @@ impl PluginWorker for WorkerService {
     ) -> std::result::Result<Response<WorkerAck>, Status> {
         let request = request.into_inner();
         self.authorize(&request.activation_id, &request.auth_token)?;
-        Ok(Response::new(WorkerAck {
-            accepted: false,
-            message: "shutdown is not implemented by the Rust worker SDK yet".into(),
-        }))
+        let acknowledgement = match self.plugin.shutdown(&request.reason).await {
+            Ok(()) => WorkerAck {
+                accepted: true,
+                message: "worker plugin shutdown completed".into(),
+            },
+            Err(error) => WorkerAck {
+                accepted: false,
+                message: format!("worker plugin shutdown failed: {error}"),
+            },
+        };
+        Ok(Response::new(acknowledgement))
     }
 }
 

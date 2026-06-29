@@ -9,6 +9,7 @@ use std::path::Path;
 #[cfg(unix)]
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -241,8 +242,62 @@ async fn worker_service_enforces_auth_and_reports_registrations() {
         .await
         .expect("shutdown returns ack")
         .into_inner();
-    assert!(!shutdown.accepted);
-    assert!(shutdown.message.contains("not implemented"));
+    assert!(shutdown.accepted);
+    assert!(shutdown.message.contains("completed"));
+
+    handle.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn worker_shutdown_authenticates_and_awaits_plugin_cleanup() {
+    let plugin = Arc::new(ShutdownPlugin::default());
+    let reasons = plugin.reasons.clone();
+    let fail = plugin.fail.clone();
+    let (handle, mut client) = spawn_worker(plugin, "http://127.0.0.1:9".into()).await;
+
+    let rejected = client
+        .shutdown(Request::new(ShutdownRequest {
+            activation_id: ACTIVATION_ID.into(),
+            auth_token: "wrong-token".into(),
+            reason: "must-not-run".into(),
+        }))
+        .await
+        .expect_err("unauthenticated shutdown is rejected");
+    assert_eq!(rejected.code(), tonic::Code::PermissionDenied);
+    assert!(reasons.lock().expect("reasons lock").is_empty());
+
+    let accepted = client
+        .shutdown(Request::new(ShutdownRequest {
+            activation_id: ACTIVATION_ID.into(),
+            auth_token: AUTH_TOKEN.into(),
+            reason: "drain memory queue".into(),
+        }))
+        .await
+        .expect("authenticated shutdown returns acknowledgement")
+        .into_inner();
+    assert!(accepted.accepted);
+    assert!(accepted.message.contains("completed"));
+    assert_eq!(
+        reasons.lock().expect("reasons lock").as_slice(),
+        ["drain memory queue"]
+    );
+
+    fail.store(true, Ordering::SeqCst);
+    let failed = client
+        .shutdown(Request::new(ShutdownRequest {
+            activation_id: ACTIVATION_ID.into(),
+            auth_token: AUTH_TOKEN.into(),
+            reason: "forced failure".into(),
+        }))
+        .await
+        .expect("plugin cleanup failure remains a protocol acknowledgement")
+        .into_inner();
+    assert!(!failed.accepted);
+    assert!(failed.message.contains("controlled shutdown failure"));
+    assert_eq!(
+        reasons.lock().expect("reasons lock").as_slice(),
+        ["drain memory queue", "forced failure"]
+    );
 
     handle.abort();
 }
@@ -1178,6 +1233,41 @@ impl WorkerPlugin for MinimalPlugin {
 
     fn register(&self, _ctx: &mut PluginContext, _config: &Json) -> Result<()> {
         Ok(())
+    }
+}
+
+#[derive(Default)]
+struct ShutdownPlugin {
+    reasons: Arc<Mutex<Vec<String>>>,
+    fail: Arc<AtomicBool>,
+}
+
+impl WorkerPlugin for ShutdownPlugin {
+    fn plugin_id(&self) -> &str {
+        "shutdown.test"
+    }
+
+    fn register(&self, _ctx: &mut PluginContext, _config: &Json) -> Result<()> {
+        Ok(())
+    }
+
+    fn shutdown<'a>(
+        &'a self,
+        reason: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            self.reasons
+                .lock()
+                .expect("reasons lock")
+                .push(reason.to_string());
+            if self.fail.load(Ordering::SeqCst) {
+                Err(WorkerSdkError::Callback(
+                    "controlled shutdown failure".into(),
+                ))
+            } else {
+                Ok(())
+            }
+        })
     }
 }
 
