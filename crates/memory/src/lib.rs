@@ -9,9 +9,11 @@
 //! Dropping an operation future is the cancellation mechanism; providers must not
 //! publish partial mutations before a cancellation-safe commit point.
 
+pub mod in_memory;
 pub mod provider;
 pub mod runtime;
 
+pub use in_memory::InMemoryProvider;
 pub use nemo_relay_types::memory;
 pub use provider::{MemoryProvider, MemoryProviderResult};
 pub use runtime::MemoryRuntime;
