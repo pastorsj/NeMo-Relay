@@ -289,6 +289,93 @@ fn acg_module_surface_analyze_stability_limits_stable_prefix_when_later_span_is_
 }
 
 #[test]
+fn acg_module_surface_keeps_changing_memory_after_the_stable_prefix() {
+    use nemo_relay::codec::request::{
+        AnnotatedLlmRequest, FunctionDefinition, Message, MessageContent, ToolDefinition,
+    };
+    use nemo_relay_adaptive::acg::ir_builder::build_prompt_ir;
+    use nemo_relay_adaptive::acg::prompt_ir::{ProvenanceLabel, SensitivityLabel};
+    use nemo_relay_adaptive::acg::stability::{StabilityThresholds, analyze_stability};
+    use nemo_relay_types::memory::{
+        MEMORY_PROMPT_BLOCK_END, MEMORY_PROMPT_BLOCK_START, MEMORY_PROMPT_BLOCK_WARNING,
+    };
+
+    let request = |memory: Option<&str>| AnnotatedLlmRequest {
+        messages: vec![
+            Message::System {
+                content: MessageContent::Text("Stable instructions".to_string()),
+                name: None,
+            },
+            Message::User {
+                content: MessageContent::Text(match memory {
+                    Some(memory) => format!(
+                        "{MEMORY_PROMPT_BLOCK_START}\n{MEMORY_PROMPT_BLOCK_WARNING}\n{memory}\n{MEMORY_PROMPT_BLOCK_END}\n\nAnswer the question."
+                    ),
+                    None => "Answer the question.".to_string(),
+                }),
+                name: None,
+            },
+        ],
+        model: Some("gpt-4o".to_string()),
+        params: None,
+        tools: Some(vec![ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "lookup".to_string(),
+                description: Some("Look up a fact".to_string()),
+                parameters: Some(serde_json::json!({"type": "object"})),
+            },
+        }]),
+        tool_choice: None,
+        store: None,
+        previous_response_id: None,
+        truncation: None,
+        reasoning: None,
+        include: None,
+        user: None,
+        metadata: None,
+        service_tier: None,
+        parallel_tool_calls: None,
+        max_output_tokens: None,
+        max_tool_calls: None,
+        top_logprobs: None,
+        stream: None,
+        extra: serde_json::Map::new(),
+    };
+
+    let observations = [
+        build_prompt_ir(&request(Some("memory A"))).unwrap(),
+        build_prompt_ir(&request(Some("memory B"))).unwrap(),
+    ];
+    let analysis = analyze_stability(&observations, &StabilityThresholds::default());
+    let memory = observations[0]
+        .blocks
+        .iter()
+        .find(|block| block.provenance == ProvenanceLabel::Memory)
+        .unwrap();
+
+    assert_eq!(memory.sensitivity, SensitivityLabel::Private);
+    assert_ne!(
+        observations[0].blocks[2].content,
+        observations[1].blocks[2].content
+    );
+    assert_eq!(
+        analysis.stable_prefix_length,
+        memory.sequence_index as usize
+    );
+    assert_eq!(analysis.stable_prefix_length, 2);
+
+    let controls = [
+        build_prompt_ir(&request(None)).unwrap(),
+        build_prompt_ir(&request(None)).unwrap(),
+    ];
+    assert_eq!(
+        analyze_stability(&controls, &StabilityThresholds::default()).stable_prefix_length,
+        3
+    );
+}
+
+#[test]
 fn acg_module_surface_provider_plugin_symbols_compile_from_canonical_namespace() {
     use nemo_relay_adaptive::acg::anthropic_plugin::AnthropicCachePlugin;
     use nemo_relay_adaptive::acg::openai_plugin::OpenAICachePlugin;
