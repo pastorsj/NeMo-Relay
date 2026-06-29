@@ -72,7 +72,11 @@ def required_scope_tags(request: MemorySearchRequest) -> tuple[str, ...]:
 def deterministic_record_id(provider: str, request: MemoryStoreRequest) -> str:
     """Create a stable Relay-side ID before a remote provider allocates one."""
     request.validate()
-    seed = request.idempotency_key or request.context.operation_id
+    seed: object = (
+        ["idempotency", request.idempotency_key]
+        if request.idempotency_key is not None
+        else ["operation", request.context.operation_id, _store_fingerprint(request)]
+    )
     material = _canonical_json([RECORD_ENVELOPE_VERSION, provider, vendor_partition(request.namespace), seed])
     return f"{provider}-{sha256(material.encode()).hexdigest()[:32]}"
 
@@ -86,7 +90,7 @@ def prepare_record(
     """Build a canonical Relay record and its reserved vendor metadata."""
     request.validate()
     timestamp = ingested_at or datetime.now(timezone.utc)
-    if timestamp.tzinfo is None:
+    if timestamp.tzinfo is None or timestamp.utcoffset() is None:
         raise_provider_error(
             provider,
             request.context.operation_id,
@@ -103,6 +107,9 @@ def prepare_record(
         provenance=request.provenance,
         metadata=request.metadata,
     )
+    # DTOs are frozen but their JSON containers are not. Round-trip once so a
+    # caller cannot mutate the durable record through request-owned dictionaries.
+    record = MemoryRecord.from_dict(record.to_dict())
     envelope = {
         "version": RECORD_ENVELOPE_VERSION,
         "record": record.to_dict(),
@@ -258,8 +265,26 @@ async def await_vendor(
 def map_vendor_error(provider: str, operation_id: str, error: Exception) -> MemoryProviderError:
     """Map common SDK/HTTP failure facts without exposing response content."""
     status = _status_code(error)
-    if status in {400, 404, 405, 422}:
+    error_name = type(error).__name__
+    if isinstance(error, ValueError) or error_name in {"ConfigurationError", "ValidationError"}:
         code, retryable = MemoryErrorCode.INVALID_REQUEST, False
+    elif error_name == "RateLimitError":
+        code, retryable = MemoryErrorCode.PROVIDER_UNAVAILABLE, True
+    elif error_name == "AuthenticationError":
+        code, retryable = MemoryErrorCode.PROVIDER_UNAVAILABLE, False
+    elif error_name in {
+        "DatabaseError",
+        "EmbeddingError",
+        "LLMError",
+        "NetworkError",
+        "VectorSearchError",
+        "VectorStoreError",
+    }:
+        code, retryable = MemoryErrorCode.PROVIDER_UNAVAILABLE, True
+    elif status in {400, 404, 405, 422}:
+        code, retryable = MemoryErrorCode.INVALID_REQUEST, False
+    elif status in {401, 403}:
+        code, retryable = MemoryErrorCode.PROVIDER_UNAVAILABLE, False
     elif status == 409:
         code, retryable = MemoryErrorCode.CONFLICT, False
     elif status in {408, 504}:
@@ -268,7 +293,7 @@ def map_vendor_error(provider: str, operation_id: str, error: Exception) -> Memo
         code, retryable = MemoryErrorCode.PROVIDER_UNAVAILABLE, True
     else:
         code, retryable = MemoryErrorCode.INTERNAL, False
-    details: JsonObject = {"error_type": type(error).__name__}
+    details: JsonObject = {"error_type": error_name}
     if status is not None:
         details["status_code"] = status
     return MemoryProviderError(
@@ -313,7 +338,7 @@ class IdempotencyLedger:
             raise ValueError("idempotency ledger capacity must be positive")
         self._capacity = capacity
         self._entries: OrderedDict[tuple[str, str], tuple[str, MemoryStoreResult]] = OrderedDict()
-        self._locks: dict[tuple[str, str], asyncio.Lock] = {}
+        self._locks: dict[tuple[str, str], tuple[asyncio.Lock, int]] = {}
         self._registry_lock = asyncio.Lock()
 
     async def run(
@@ -349,13 +374,29 @@ class IdempotencyLedger:
                     self._entries.popitem(last=False)
                 return result
         finally:
-            async with self._registry_lock:
-                if not lock.locked():
-                    self._locks.pop(key, None)
+            await self._release_lock(key, lock)
 
     async def _lock_for(self, key: tuple[str, str]) -> asyncio.Lock:
         async with self._registry_lock:
-            return self._locks.setdefault(key, asyncio.Lock())
+            current = self._locks.get(key)
+            if current is None:
+                lock = asyncio.Lock()
+                self._locks[key] = (lock, 1)
+                return lock
+            lock, users = current
+            self._locks[key] = (lock, users + 1)
+            return lock
+
+    async def _release_lock(self, key: tuple[str, str], lock: asyncio.Lock) -> None:
+        async with self._registry_lock:
+            current = self._locks.get(key)
+            if current is None or current[0] is not lock:
+                return
+            users = current[1] - 1
+            if users == 0:
+                self._locks.pop(key, None)
+            else:
+                self._locks[key] = (lock, users)
 
 
 def _store_fingerprint(request: MemoryStoreRequest) -> str:

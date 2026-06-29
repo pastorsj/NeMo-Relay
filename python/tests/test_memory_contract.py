@@ -149,6 +149,33 @@ def test_provider_error_retains_canonical_failure():
     assert error.error is failure
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        memory.MemoryRequestContext("operation", deadline=datetime(2026, 6, 29, 12)),
+        memory.MemoryFilter(event_after=datetime(2026, 6, 29, 12)),
+    ],
+)
+def test_memory_contract_rejects_timezone_naive_control_timestamps(
+    value: memory.MemoryRequestContext | memory.MemoryFilter,
+):
+    with pytest.raises(memory.MemoryContractError, match="timezone"):
+        value.validate()
+
+
+def test_store_rejects_timezone_naive_event_timestamp():
+    request = memory.MemoryStoreRequest(
+        context=memory.MemoryRequestContext("store-naive"),
+        namespace=memory.MemoryNamespace("tenant", "subject"),
+        content=memory.MemoryContent.text_content("content"),
+        event_timestamp=datetime(2026, 6, 29, 12),
+        provenance=memory.MemoryProvenance("test"),
+    )
+
+    with pytest.raises(memory.MemoryContractError, match="timezone"):
+        request.validate()
+
+
 async def test_runtime_checkable_provider_protocol_executes_required_methods(contract_fixture: JsonObject):
     result_data = cast(JsonObject, contract_fixture["search_result"])
     store_data = cast(JsonObject, contract_fixture["store_result"])

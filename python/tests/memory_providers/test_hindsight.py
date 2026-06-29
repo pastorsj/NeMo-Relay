@@ -91,6 +91,38 @@ async def test_bank_and_scope_tags_prevent_identity_broadening():
 
     assert not other_subject.matches
     assert not other_agent.matches
+    assert client.recall_calls[0]["tags"] is None
+    assert client.recall_calls[0]["tags_match"] == "any"
+
+
+async def test_multiple_extracted_facts_for_one_document_return_one_relay_record():
+    client = FakeHindsightClient()
+    provider = HindsightMemoryProvider(client)
+    stored = await provider.store(store_request())
+    duplicate = client.items[0]
+    client.items.append(
+        type(duplicate)(
+            id="fact-duplicate",
+            bank_id=duplicate.bank_id,
+            content="another extracted solarized fact",
+            timestamp=duplicate.timestamp,
+            context=duplicate.context,
+            document_id=duplicate.document_id,
+            metadata=duplicate.metadata,
+            tags=duplicate.tags,
+        )
+    )
+
+    result = await provider.search(
+        MemorySearchRequest(
+            context=MemoryRequestContext("dedupe"),
+            namespace=store_request().namespace,
+            query="solarized",
+            limit=5,
+        )
+    )
+
+    assert [match.record.id for match in result.matches] == [stored.record.id]
 
 
 async def test_reflect_commits_derived_record_with_mapped_evidence_parent():
@@ -101,13 +133,11 @@ async def test_reflect_commits_derived_record_with_mapped_evidence_parent():
         context=MemoryRequestContext("reflect-1"),
         namespace=store_request().namespace,
         action=MemoryMaintenanceAction.REFLECT,
-        window=MemoryMaintenanceWindow(
-            checkpoint_id="checkpoint-1",
-            query="What solarized preference is remembered?",
-            scope=MemorySearchScope.SUBJECT,
-            limit=10,
-        ),
-        parameters={"budget": "low"},
+        parameters={
+            "budget": "low",
+            "checkpoint_id": "checkpoint-1",
+            "query": "What solarized preference is remembered?",
+        },
     )
 
     result = await provider.maintain(maintenance)
@@ -135,6 +165,40 @@ async def test_consolidate_is_not_claimed_by_reflect_capability():
         await provider.maintain(request)
 
     assert failure.value.error.code is MemoryErrorCode.UNSUPPORTED
+
+
+async def test_reflect_rejects_bounded_window_it_cannot_enforce():
+    provider = HindsightMemoryProvider(FakeHindsightClient())
+    request = MemoryMaintenanceRequest(
+        context=MemoryRequestContext("bounded-window"),
+        namespace=MemoryNamespace("tenant", "subject"),
+        action=MemoryMaintenanceAction.REFLECT,
+        window=MemoryMaintenanceWindow(
+            checkpoint_id="checkpoint",
+            query="Reflect",
+            limit=5,
+        ),
+    )
+
+    with pytest.raises(MemoryProviderError) as failure:
+        await provider.maintain(request)
+
+    assert failure.value.error.code is MemoryErrorCode.UNSUPPORTED
+
+
+async def test_reflect_rejects_unknown_scope_parameter_as_typed_invalid_request():
+    provider = HindsightMemoryProvider(FakeHindsightClient())
+    request = MemoryMaintenanceRequest(
+        context=MemoryRequestContext("invalid-scope"),
+        namespace=MemoryNamespace("tenant", "subject"),
+        action=MemoryMaintenanceAction.REFLECT,
+        parameters={"query": "Reflect", "scope": "organization"},
+    )
+
+    with pytest.raises(MemoryProviderError) as failure:
+        await provider.maintain(request)
+
+    assert failure.value.error.code is MemoryErrorCode.INVALID_REQUEST
 
 
 async def test_hindsight_vendor_failure_is_typed():

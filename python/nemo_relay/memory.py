@@ -430,6 +430,14 @@ class MemoryFilter:
 
     def validate(self) -> None:
         """Validate timestamp range ordering."""
+        for name, value in (
+            ("event_after", self.event_after),
+            ("event_before", self.event_before),
+            ("ingested_after", self.ingested_after),
+            ("ingested_before", self.ingested_before),
+        ):
+            if value is not None:
+                _validate_datetime(name, value)
         _validate_range("event", self.event_after, self.event_before)
         _validate_range("ingested", self.ingested_after, self.ingested_before)
 
@@ -457,6 +465,8 @@ class MemoryRequestContext:
     def validate(self) -> None:
         """Validate the operation correlation identifier."""
         _validate_identifier("operation_id", self.operation_id)
+        if self.deadline is not None:
+            _validate_datetime("deadline", self.deadline)
 
     @classmethod
     def from_dict(cls, data: JsonObject) -> MemoryRequestContext:
@@ -548,6 +558,7 @@ class MemoryStoreRequest:
         self.context.validate()
         self.namespace.validate()
         self.content.validate()
+        _validate_datetime("event_timestamp", self.event_timestamp)
         self.provenance.validate()
         _validate_optional_identifier("idempotency_key", self.idempotency_key)
 
@@ -769,8 +780,7 @@ def _to_wire(value: object, *, omit_empty: bool = True) -> Json:
 
 
 def _format_datetime(value: datetime) -> str:
-    if value.tzinfo is None:
-        _raise_invalid("memory timestamps must include a timezone")
+    _validate_datetime("memory timestamp", value)
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
@@ -802,6 +812,11 @@ def _validate_identifier(name: str, value: str) -> None:
 def _validate_optional_identifier(name: str, value: str | None) -> None:
     if value is not None:
         _validate_identifier(name, value)
+
+
+def _validate_datetime(name: str, value: datetime) -> None:
+    if value.tzinfo is None or value.utcoffset() is None:
+        _raise_invalid(f"{name} must include a timezone")
 
 
 def _validate_range(name: str, after: datetime | None, before: datetime | None) -> None:

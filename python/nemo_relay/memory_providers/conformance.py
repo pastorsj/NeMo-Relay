@@ -17,7 +17,6 @@ from nemo_relay.memory import (
     MemoryMaintenanceAction,
     MemoryMaintenanceRequest,
     MemoryMaintenanceResult,
-    MemoryMaintenanceWindow,
     MemoryNamespace,
     MemoryProvenance,
     MemoryProvider,
@@ -235,11 +234,10 @@ async def _check_capabilities(provider: MemoryProvider, run_id: str, namespace: 
         context=_context(run_id, "maintenance"),
         namespace=namespace,
         action=MemoryMaintenanceAction.REFLECT,
-        window=MemoryMaintenanceWindow(
-            checkpoint_id=f"{run_id}-checkpoint",
-            query="Reflect on the conformance memory",
-            limit=5,
-        ),
+        parameters={
+            "checkpoint_id": f"{run_id}-checkpoint",
+            "query": "Reflect on the conformance memory",
+        },
     )
     result = await maintain(request)
     _require(isinstance(result, MemoryMaintenanceResult), "maintain returned the wrong result type")

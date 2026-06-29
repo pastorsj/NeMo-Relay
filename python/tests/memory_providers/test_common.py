@@ -83,6 +83,10 @@ def test_record_envelope_round_trip_preserves_relay_fields_and_separates_vendor_
     assert rebuilt.provider_metadata == {"vendor_id": "native-7", "score_source": "semantic"}
     assert RECORD_METADATA_KEY in reserved
 
+    request.metadata["kind"] = "mutated-after-prepare"
+    assert record.metadata["kind"] == "preference"
+    assert rebuilt.metadata["kind"] == "preference"
+
 
 def test_missing_or_cross_provider_envelope_is_typed_failure():
     with pytest.raises(MemoryProviderError) as missing:
@@ -150,6 +154,49 @@ async def test_idempotency_ledger_replays_conflicts_and_does_not_serialize_other
     assert conflict.value.error.code is MemoryErrorCode.CONFLICT
 
 
+async def test_idempotency_waiters_keep_one_key_lock_after_cancelled_or_failed_owner():
+    ledger = IdempotencyLedger()
+    request = store_request()
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    calls = 0
+    active = 0
+    max_active = 0
+
+    async def mutation() -> MemoryStoreResult:
+        nonlocal active, calls, max_active
+        calls += 1
+        active += 1
+        max_active = max(max_active, active)
+        try:
+            if calls == 1:
+                first_entered.set()
+                await release_first.wait()
+                raise RuntimeError("synthetic first mutation failure")
+            record, _ = prepare_record("fake", request, ingested_at=NOW)
+            return MemoryStoreResult(record, MemoryStoreDisposition.CREATED)
+        finally:
+            active -= 1
+
+    first = asyncio.create_task(ledger.run(request, mutation))
+    await first_entered.wait()
+    second = asyncio.create_task(ledger.run(request, mutation))
+    third = asyncio.create_task(ledger.run(request, mutation))
+    await asyncio.sleep(0)
+    release_first.set()
+
+    with pytest.raises(RuntimeError, match="synthetic"):
+        await first
+    results = await asyncio.gather(second, third)
+
+    assert calls == 2
+    assert max_active == 1
+    assert {result.disposition for result in results} == {
+        MemoryStoreDisposition.CREATED,
+        MemoryStoreDisposition.EXISTING,
+    }
+
+
 async def test_await_vendor_preserves_cancellation_and_maps_deadlines_and_status():
     async def cancelled() -> None:
         raise asyncio.CancelledError
@@ -180,3 +227,11 @@ async def test_await_vendor_preserves_cancellation_and_maps_deadlines_and_status
         await await_vendor(failed(), provider="fake", operation_id="failed", deadline=None)
     assert unavailable.value.error.code is MemoryErrorCode.PROVIDER_UNAVAILABLE
     assert "secret" not in str(unavailable.value)
+
+    async def invalid() -> None:
+        raise ValueError("sensitive invalid value")
+
+    with pytest.raises(MemoryProviderError) as invalid_request:
+        await await_vendor(invalid(), provider="fake", operation_id="invalid", deadline=None)
+    assert invalid_request.value.error.code is MemoryErrorCode.INVALID_REQUEST
+    assert "sensitive" not in str(invalid_request.value)

@@ -36,7 +36,7 @@ from nemo_relay.memory_providers._common import (
     vendor_partition,
 )
 
-MEM0_MIN_VERSION = "2.0.8"
+MEM0_MIN_VERSION = "2.0.10"
 MEM0_MAX_VERSION = "3.0.0"
 _FILTER_PREFIX = "_nemo_relay_filter_v1_"
 _AGENT_METADATA_KEY = "_nemo_relay_agent_v1"
@@ -88,7 +88,7 @@ class Mem0MemoryProvider:
             raise ValueError("pass either a Mem0 client or config, not both")
         if overfetch_factor < 1:
             raise ValueError("overfetch_factor must be positive")
-        self._client = client or _default_client(config)
+        self._client = client if client is not None else _default_client(config)
         self._ledger = IdempotencyLedger(idempotency_capacity)
         self._overfetch_factor = overfetch_factor
 
@@ -182,7 +182,7 @@ class Mem0MemoryProvider:
 
 def _default_client(config: Mapping[str, object] | None) -> Mem0AsyncClient:
     try:
-        from mem0 import AsyncMemory  # ty: ignore[unresolved-import]
+        from mem0 import AsyncMemory
     except ImportError as error:
         raise ImportError("Mem0 support requires `pip install 'nemo-relay[mem0]'`") from error
     if config is None:

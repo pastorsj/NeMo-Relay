@@ -24,7 +24,7 @@ class FakeMem0Item:
 
 
 class FakeMem0Client:
-    """In-memory fake matching the Mem0 2.0.8 async shapes used by Relay."""
+    """In-memory fake matching the Mem0 2.0.10 async shapes used by Relay."""
 
     def __init__(self) -> None:
         self.items: list[FakeMem0Item] = []

@@ -113,7 +113,7 @@ class HindsightMemoryProvider:
             raise ValueError("pass either a Hindsight client or connection settings, not both")
         if recall_tokens_per_item < 1:
             raise ValueError("recall_tokens_per_item must be positive")
-        self._client = client or _default_client(base_url, api_key, timeout)
+        self._client = client if client is not None else _default_client(base_url, api_key, timeout)
         self._ledger = IdempotencyLedger(idempotency_capacity)
         self._recall_tokens_per_item = recall_tokens_per_item
 
@@ -153,6 +153,7 @@ class HindsightMemoryProvider:
         request.validate()
         items = await self._recall(request)
         matches: list[MemoryMatch] = []
+        seen_record_ids: set[str] = set()
         for item in items:
             metadata = _mapping_field(item, "metadata")
             document_id = _field(item, "document_id")
@@ -166,7 +167,10 @@ class HindsightMemoryProvider:
             )
             if not record_matches(record, request):
                 continue
+            if record.id in seen_record_ids:
+                continue
             score = _final_score(item, request.context.operation_id)
+            seen_record_ids.add(record.id)
             matches.append(MemoryMatch(record=record, score=score, rank=len(matches) + 1))
             if len(matches) == request.limit:
                 break
@@ -182,7 +186,14 @@ class HindsightMemoryProvider:
                 MemoryErrorCode.UNSUPPORTED,
                 "Hindsight adapter supports reflect maintenance only",
             )
-        query = request.window.query if request.window is not None else request.parameters.get("query")
+        if request.window is not None:
+            raise_provider_error(
+                self.name,
+                request.context.operation_id,
+                MemoryErrorCode.UNSUPPORTED,
+                "Hindsight reflect cannot enforce a bounded Relay maintenance window",
+            )
+        query = request.parameters.get("query")
         if not isinstance(query, str) or not query.strip():
             raise_provider_error(
                 self.name,
@@ -194,11 +205,9 @@ class HindsightMemoryProvider:
             context=request.context,
             namespace=request.namespace,
             query=query,
-            scope=request.window.scope
-            if request.window is not None
-            else MemorySearchScope(str(request.parameters.get("scope", "subject"))),
-            filter=request.window.filter if request.window is not None else MemoryFilter(),
-            limit=request.window.limit if request.window is not None else 20,
+            scope=_maintenance_scope(request.parameters.get("scope", "subject"), request.context.operation_id),
+            filter=MemoryFilter(),
+            limit=_maintenance_limit(request.parameters.get("limit", 20), request.context.operation_id),
         )
         search_request.validate()
         tags = list(required_scope_tags(search_request)) or None
@@ -236,7 +245,7 @@ class HindsightMemoryProvider:
                 context=context,
                 max_tokens=cast(int | None, max_tokens),
                 tags=tags,
-                tags_match="all_strict",
+                tags_match=_tags_match(tags),
                 include_facts=True,
                 include_tool_calls=False,
                 include_tool_call_output=False,
@@ -250,7 +259,14 @@ class HindsightMemoryProvider:
             _invalid_response(request.context.operation_id, "Hindsight reflect response has no text")
         fact_ids = _reflect_fact_ids(response)
         parent_ids = await self._relay_parent_ids(search_request, set(fact_ids))
-        checkpoint = request.window.checkpoint_id if request.window is not None else request.context.operation_id
+        checkpoint = request.parameters.get("checkpoint_id", request.context.operation_id)
+        if not isinstance(checkpoint, str) or not checkpoint.strip():
+            raise_provider_error(
+                self.name,
+                request.context.operation_id,
+                MemoryErrorCode.INVALID_REQUEST,
+                "Hindsight reflect checkpoint_id must be a nonempty string",
+            )
         stored = await self.store(
             MemoryStoreRequest(
                 context=MemoryRequestContext(f"{request.context.operation_id}:store", request.context.deadline),
@@ -278,6 +294,7 @@ class HindsightMemoryProvider:
         return MemoryMaintenanceResult(records=(stored.record,))
 
     async def _recall(self, request: MemorySearchRequest) -> list[object]:
+        tags = list(required_scope_tags(request)) or None
         response = await await_vendor(
             self._client.arecall(
                 vendor_partition(request.namespace),
@@ -286,8 +303,8 @@ class HindsightMemoryProvider:
                 budget="mid",
                 trace=False,
                 include_source_facts=True,
-                tags=list(required_scope_tags(request)) or None,
-                tags_match="all_strict",
+                tags=tags,
+                tags_match=_tags_match(tags),
                 prefer_observations=False,
             ),
             provider=self.name,
@@ -324,7 +341,7 @@ def _default_client(base_url: str | None, api_key: str | None, timeout: float) -
     if not base_url:
         raise ValueError("base_url is required when a Hindsight client is not supplied")
     try:
-        from hindsight_client import Hindsight  # ty: ignore[unresolved-import]
+        from hindsight_client import Hindsight
     except ImportError as error:
         raise ImportError("Hindsight support requires `pip install 'nemo-relay[hindsight]'`") from error
     return cast(
@@ -375,6 +392,33 @@ def _record_id(metadata: Mapping[str, object], operation_id: str) -> str:
     if not isinstance(value, str):
         _invalid_response(operation_id, "Hindsight result has no Relay document identity")
     return value
+
+
+def _maintenance_scope(value: object, operation_id: str) -> MemorySearchScope:
+    try:
+        return MemorySearchScope(str(value))
+    except ValueError:
+        raise_provider_error(
+            "hindsight",
+            operation_id,
+            MemoryErrorCode.INVALID_REQUEST,
+            "Hindsight reflect scope must be subject, agent, session, or exact",
+        )
+
+
+def _maintenance_limit(value: object, operation_id: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 1_000:
+        raise_provider_error(
+            "hindsight",
+            operation_id,
+            MemoryErrorCode.INVALID_REQUEST,
+            "Hindsight reflect limit must be an integer in 1..=1000",
+        )
+    return value
+
+
+def _tags_match(tags: list[str] | None) -> str:
+    return "all_strict" if tags else "any"
 
 
 def _invalid_response(operation_id: str, message: str) -> NoReturn:
