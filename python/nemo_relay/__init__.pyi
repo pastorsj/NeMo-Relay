@@ -6,7 +6,7 @@
 Summary:
     ``nemo_relay`` exposes the Python entry point for scope tracking, lifecycle
     events, middleware registration, typed helpers, plugins, adaptive
-    configuration, and native observability types.
+    configuration, memory contract types, and native observability types.
 
 Description:
     The concrete implementations live in Python wrapper modules and in the
@@ -30,6 +30,7 @@ from nemo_relay import codecs as codecs
 from nemo_relay import guardrails as guardrails
 from nemo_relay import intercepts as intercepts
 from nemo_relay import llm as llm
+from nemo_relay import memory as memory
 from nemo_relay import observability as observability
 from nemo_relay import pii_redaction as pii_redaction
 from nemo_relay import plugin as plugin

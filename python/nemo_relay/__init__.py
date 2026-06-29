@@ -15,6 +15,7 @@ The main entry points are:
 - ``nemo_relay.typed`` for codec-based typed wrappers
 - ``nemo_relay.plugin`` for global plugin configuration and custom plugin registration
 - ``nemo_relay.adaptive`` for adaptive component configuration helpers
+- ``nemo_relay.memory`` for provider-neutral memory contract types
 - ``nemo_relay.observability`` for observability component configuration helpers
 - ``nemo_relay.pii_redaction`` for PII redaction component configuration helpers
 - ``nemo_relay.pricing`` for pricing component configuration helpers
@@ -191,6 +192,7 @@ from nemo_relay import (  # noqa: E402
     guardrails,
     intercepts,
     llm,
+    memory,
     observability,
     pii_redaction,
     plugin,
@@ -436,6 +438,7 @@ __all__ = [
     "typed",
     "plugin",
     "adaptive",
+    "memory",
     "observability",
     "pii_redaction",
     "pricing",
