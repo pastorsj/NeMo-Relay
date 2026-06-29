@@ -224,6 +224,43 @@ prerequisites, supported versions, framework extras, and package-manager
 commands. See [Plugin Configuration Files](/build-plugins/plugin-configuration-files)
 for plugin file discovery and precedence.
 
+## Runtime Outputs
+
+ATOF 0.1 events are Relay's canonical runtime record. In-process subscribers
+consume snapshots from the same event stream, while exporters project those
+events into formats intended for other systems. A projection does not redefine
+scope ownership, middleware ordering, or provider payload semantics.
+
+| Output | Producer and consumer | Typical artifact or destination | Choose it when |
+| --- | --- | --- | --- |
+| [ATOF](/observability-plugin/atof) | The core emits events; subscribers and raw-event collectors consume them. | JSONL files or streamed raw events. | You need the canonical event shape for debugging, replay inputs, or a custom consumer. |
+| [In-process subscribers](/about-nemo-relay/concepts/subscribers) | The async dispatcher delivers event snapshots to application- or plugin-registered callbacks. | Application state, queues, or custom exporters. | Runtime-local logic should react to events without changing managed execution. |
+| [ATIF](/observability-plugin/atif) | The ATIF exporter groups events for downstream trajectory consumers. | One trajectory artifact per top-level agent run, written locally or to configured storage. | Evaluation or analysis needs normalized agent steps and lineage. |
+| [OpenTelemetry](/observability-plugin/opentelemetry) | The OpenTelemetry exporter maps Relay events to trace spans. | An OTLP collector or configured tracing backend. | Operations teams use standard distributed tracing infrastructure. |
+| [OpenInference](/observability-plugin/openinference) | The OpenInference exporter maps Relay events to AI-semantic trace spans. | An OpenInference-compatible tracing backend. | Model and agent analysis benefits from OpenInference conventions. |
+
+## Source Layout
+
+Rust defines runtime behavior. Python and Node.js are the other primary
+supported bindings. Go, WebAssembly, and the raw C FFI are experimental,
+source-first surfaces.
+
+| Path | Responsibility |
+| --- | --- |
+| `crates/core` | Scope, managed execution, middleware, events, subscribers, and runtime behavior. |
+| `crates/types` | Shared event, plugin, and cross-crate data types. |
+| `crates/plugin` | Plugin contracts, configuration, validation, and lifecycle. |
+| `crates/worker-proto` and `crates/worker` | Protocol definitions and runtime support for out-of-process plugin workers. |
+| `crates/adaptive` | Adaptive runtime primitives and plugin components. |
+| `crates/python` and `python/nemo_relay` | The PyO3 extension and public Python wrapper package. |
+| `crates/node` | Native Node.js binding and JavaScript or TypeScript entry points. |
+| `crates/ffi` | Experimental raw C ABI used by downstream bindings. |
+| `go/nemo_relay` | Experimental Go binding over the C FFI. |
+| `crates/wasm` | Experimental WebAssembly binding and JavaScript wrappers. |
+| `docs` | Public documentation source. |
+| `patches` | Relay changes maintained as third-party integration patch sets. |
+| `third_party` | Pinned upstream source checkouts used to develop and verify patches. |
+
 ## Design Goal
 
 NeMo Relay is designed so that application developers, framework integrators, plugin authors, and observability consumers all reason about the same runtime semantics. One conceptual model should remain stable even when the binding or integration style changes.
