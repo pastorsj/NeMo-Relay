@@ -5,8 +5,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from typing import Any
+
+from nemo_relay.memory_providers.graphiti import (
+    GraphitiEdgeSnapshot,
+    GraphitiEpisodeEvidence,
+    GraphitiEpisodeSnapshot,
+)
 
 
 class FakeVendorError(Exception):
@@ -249,6 +256,101 @@ class FakeHindsightClient:
             "text": f"Reflection: {query}",
             "based_on": {"memories": memories if include_facts else None, "mental_models": [], "directives": []},
         }
+
+    def _maybe_fail(self) -> None:
+        if self.next_error is not None:
+            status, self.next_error = self.next_error, None
+            raise FakeVendorError(status)
+
+
+class FakeGraphitiClient:
+    """Deterministic temporal-graph fake matching Relay's thin wrapper."""
+
+    def __init__(self) -> None:
+        self.items: dict[tuple[str, str], GraphitiEpisodeEvidence] = {}
+        self.add_calls: list[dict[str, object]] = []
+        self.search_calls: list[dict[str, object]] = []
+        self.next_error: int | None = None
+        self.duplicate_hits = False
+
+    async def add_episode(
+        self,
+        *,
+        name: str,
+        body: str,
+        source_description: str,
+        reference_time: datetime,
+        group_id: str,
+        uuid: str,
+    ) -> GraphitiEpisodeEvidence:
+        self._maybe_fail()
+        self.add_calls.append(
+            {
+                "name": name,
+                "body": body,
+                "source_description": source_description,
+                "reference_time": reference_time,
+                "group_id": group_id,
+                "uuid": uuid,
+            }
+        )
+        created_at = datetime.now(timezone.utc)
+        edge = GraphitiEdgeSnapshot(
+            uuid=f"edge-{uuid}",
+            name="RELATES_TO",
+            fact=f"Extracted fact: {body}",
+            episodes=(uuid,),
+            source_node_uuid=f"source-{uuid}",
+            target_node_uuid=f"target-{uuid}",
+            created_at=created_at,
+            valid_at=reference_time,
+            reference_time=reference_time,
+            attributes={"extractor": "fake-graphiti"},
+        )
+        episode = GraphitiEpisodeSnapshot(
+            uuid=uuid,
+            name=name,
+            group_id=group_id,
+            content=body,
+            created_at=created_at,
+            valid_at=reference_time,
+            entity_edge_ids=(edge.uuid,),
+        )
+        evidence = GraphitiEpisodeEvidence(episode, (edge,))
+        self.items[(group_id, uuid)] = evidence
+        return evidence
+
+    async def search_episodes(
+        self,
+        query: str,
+        *,
+        group_id: str,
+        num_results: int,
+    ) -> tuple[GraphitiEpisodeEvidence, ...]:
+        self._maybe_fail()
+        self.search_calls.append({"query": query, "group_id": group_id, "num_results": num_results})
+        query_tokens = set(query.lower().split())
+        ranked: list[tuple[float, GraphitiEpisodeEvidence]] = []
+        for (item_group, _), evidence in self.items.items():
+            if item_group != group_id:
+                continue
+            fact_tokens = set(" ".join(edge.fact for edge in evidence.edges).lower().split())
+            score = len(query_tokens & fact_tokens) / max(1, len(query_tokens))
+            if score > 0:
+                ranked.append((score, evidence))
+        ranked.sort(key=lambda item: (-item[0], item[1].episode.uuid))
+        output = [replace(evidence, fact_rank=rank) for rank, (_, evidence) in enumerate(ranked, 1)]
+        if self.duplicate_hits and output:
+            output.insert(1, output[0])
+        return tuple(output[:num_results])
+
+    def replace_edge(self, episode_id: str, **changes: object) -> None:
+        for key, evidence in self.items.items():
+            if evidence.episode.uuid == episode_id:
+                edge = replace(evidence.edges[0], **changes)
+                self.items[key] = replace(evidence, edges=(edge,))
+                return
+        raise KeyError(episode_id)
 
     def _maybe_fail(self) -> None:
         if self.next_error is not None:
