@@ -99,6 +99,16 @@ export interface CacheRequestFactsOptions {
   timestamp?: string;
 }
 
+/** Hash-only automatic-memory facts correlated with cache behavior. */
+export interface MemoryCacheFacts {
+  version: string;
+  hash_prefix: string;
+  previous_hash_prefix?: string;
+  changed?: boolean;
+  sequence_index: number;
+  outside_stable_prefix?: boolean;
+}
+
 /** Request-time facts used to classify cache misses. */
 export interface CacheRequestFacts {
   provider: string;
@@ -111,6 +121,7 @@ export interface CacheRequestFacts {
   actual_hash_prefix?: string;
   retention_window_secs?: number;
   observed_gap_secs?: number;
+  memory?: MemoryCacheFacts;
   missing_facts?: string[];
 }
 
@@ -138,6 +149,7 @@ export interface CacheTelemetryEvent {
   hit_rate: number;
   miss_reason?: Record<string, Json>;
   miss_diagnosis?: Record<string, Json>;
+  memory?: MemoryCacheFacts;
   provider: string;
   timestamp: string;
 }

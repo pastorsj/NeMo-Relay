@@ -64,6 +64,9 @@ type CacheRequestFactsInput = nemo_relay.CacheRequestFactsInput
 // CacheRequestFacts describes request-time facts used to classify cache misses.
 type CacheRequestFacts = nemo_relay.CacheRequestFacts
 
+// MemoryCacheFacts correlates an automatic-memory revision with cache behavior.
+type MemoryCacheFacts = nemo_relay.MemoryCacheFacts
+
 // CacheTelemetryEventInput is the typed input for building cache telemetry events.
 type CacheTelemetryEventInput = nemo_relay.CacheTelemetryEventInput
 

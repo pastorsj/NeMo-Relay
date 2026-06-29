@@ -169,6 +169,14 @@ class TestDynamicConfigContract:
             request_facts={
                 "provider": "openai",
                 "stable_prefix_length": 0,
+                "memory": {
+                    "version": "0.1",
+                    "hash_prefix": "sha256:aabbccddeeff",
+                    "previous_hash_prefix": "sha256:112233445566",
+                    "changed": True,
+                    "sequence_index": 1,
+                    "outside_stable_prefix": True,
+                },
                 "missing_facts": ["acg_stability_unavailable"],
             },
             agent_id="test-adaptive-openai-telemetry",
@@ -182,4 +190,12 @@ class TestDynamicConfigContract:
         assert event["provider"] == "openai"
         assert event["cache_read_tokens"] == 150
         assert event["cache_creation_tokens"] == 0
+        assert event["memory"] == {
+            "version": "0.1",
+            "hash_prefix": "sha256:aabbccddeeff",
+            "previous_hash_prefix": "sha256:112233445566",
+            "changed": True,
+            "sequence_index": 1,
+            "outside_stable_prefix": True,
+        }
         assert "miss_reason" not in event

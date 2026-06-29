@@ -66,19 +66,30 @@ type CacheRequestFactsInput struct {
 	Timestamp        string          `json:"timestamp,omitempty"`
 }
 
+// MemoryCacheFacts correlates one automatic-memory revision with cache behavior without exposing memory text.
+type MemoryCacheFacts struct {
+	Version             string  `json:"version"`
+	HashPrefix          string  `json:"hash_prefix"`
+	PreviousHashPrefix  *string `json:"previous_hash_prefix,omitempty"`
+	Changed             *bool   `json:"changed,omitempty"`
+	SequenceIndex       uint32  `json:"sequence_index"`
+	OutsideStablePrefix *bool   `json:"outside_stable_prefix,omitempty"`
+}
+
 // CacheRequestFacts describes request-time facts used to classify cache misses.
 type CacheRequestFacts struct {
-	Provider                   string   `json:"provider"`
-	StablePrefixLength         uint64   `json:"stable_prefix_length"`
-	StablePrefixTokens         *uint32  `json:"stable_prefix_tokens,omitempty"`
-	RequiredMinTokens          *uint32  `json:"required_min_tokens,omitempty"`
-	FirstMismatchSpanID        *string  `json:"first_mismatch_span_id,omitempty"`
-	FirstMismatchSequenceIndex *uint32  `json:"first_mismatch_sequence_index,omitempty"`
-	ExpectedHashPrefix         *string  `json:"expected_hash_prefix,omitempty"`
-	ActualHashPrefix           *string  `json:"actual_hash_prefix,omitempty"`
-	RetentionWindowSecs        *float64 `json:"retention_window_secs,omitempty"`
-	ObservedGapSecs            *float64 `json:"observed_gap_secs,omitempty"`
-	MissingFacts               []string `json:"missing_facts,omitempty"`
+	Provider                   string            `json:"provider"`
+	StablePrefixLength         uint64            `json:"stable_prefix_length"`
+	StablePrefixTokens         *uint32           `json:"stable_prefix_tokens,omitempty"`
+	RequiredMinTokens          *uint32           `json:"required_min_tokens,omitempty"`
+	FirstMismatchSpanID        *string           `json:"first_mismatch_span_id,omitempty"`
+	FirstMismatchSequenceIndex *uint32           `json:"first_mismatch_sequence_index,omitempty"`
+	ExpectedHashPrefix         *string           `json:"expected_hash_prefix,omitempty"`
+	ActualHashPrefix           *string           `json:"actual_hash_prefix,omitempty"`
+	RetentionWindowSecs        *float64          `json:"retention_window_secs,omitempty"`
+	ObservedGapSecs            *float64          `json:"observed_gap_secs,omitempty"`
+	Memory                     *MemoryCacheFacts `json:"memory,omitempty"`
+	MissingFacts               []string          `json:"missing_facts,omitempty"`
 }
 
 // CacheTelemetryEventInput is the typed input for building cache telemetry events.
@@ -97,16 +108,17 @@ type CacheTelemetryEventInput struct {
 
 // CacheTelemetryEvent is the normalized adaptive cache telemetry event.
 type CacheTelemetryEvent struct {
-	RequestID           string         `json:"request_id"`
-	AgentIdentity       AgentIdentity  `json:"agent_identity"`
-	CacheReadTokens     uint64         `json:"cache_read_tokens"`
-	CacheCreationTokens uint64         `json:"cache_creation_tokens"`
-	TotalPromptTokens   uint64         `json:"total_prompt_tokens"`
-	HitRate             float64        `json:"hit_rate"`
-	MissReason          map[string]any `json:"miss_reason,omitempty"`
-	MissDiagnosis       map[string]any `json:"miss_diagnosis,omitempty"`
-	Provider            string         `json:"provider"`
-	Timestamp           string         `json:"timestamp"`
+	RequestID           string            `json:"request_id"`
+	AgentIdentity       AgentIdentity     `json:"agent_identity"`
+	CacheReadTokens     uint64            `json:"cache_read_tokens"`
+	CacheCreationTokens uint64            `json:"cache_creation_tokens"`
+	TotalPromptTokens   uint64            `json:"total_prompt_tokens"`
+	HitRate             float64           `json:"hit_rate"`
+	MissReason          map[string]any    `json:"miss_reason,omitempty"`
+	MissDiagnosis       map[string]any    `json:"miss_diagnosis,omitempty"`
+	Memory              *MemoryCacheFacts `json:"memory,omitempty"`
+	Provider            string            `json:"provider"`
+	Timestamp           string            `json:"timestamp"`
 }
 
 func adaptiveConfigCString(config AdaptiveConfig) (*C.char, error) {

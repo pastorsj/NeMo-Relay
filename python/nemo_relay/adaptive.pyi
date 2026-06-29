@@ -290,7 +290,10 @@ class AdaptiveRuntime:
 
         Returns:
             dict | None: Derived cache facts when enough hot-cache state exists,
-            otherwise ``None``.
+            otherwise ``None``. When automatic memory is present, ``memory``
+            contains only its envelope version, short hash prefixes, change
+            status, sequence index, and stable-prefix relationship; it never
+            contains recalled text.
         """
         ...
 
@@ -314,7 +317,9 @@ def build_cache_telemetry_event(
     """Build one normalized cache-telemetry event payload.
 
     Returns ``None`` when the supplied inputs do not produce a valid telemetry
-    event for the selected provider.
+    event for the selected provider. Hash-only ``request_facts["memory"]`` are
+    copied to ``event["memory"]`` for correlation with cache tokens; their
+    presence does not claim that a memory revision caused a hit or miss.
     """
     ...
 

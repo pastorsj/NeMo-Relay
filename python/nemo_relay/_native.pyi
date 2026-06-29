@@ -1151,7 +1151,8 @@ class AdaptiveRuntime:
 
         Returns:
             Derived cache facts, or ``None`` when there is not enough state to
-            produce a valid event.
+            produce a valid event. Automatic-memory diagnostics are hash-only
+            and never include recalled text.
         """
         ...
 
@@ -2275,7 +2276,9 @@ def build_cache_telemetry_event(*args: object, **kwargs: object) -> _JsonObject:
             timestamp values accepted by the native adaptive helper.
 
     Returns:
-        Cache telemetry event as a JSON object.
+        Cache telemetry event as a JSON object. Optional hash-only ``memory``
+        facts correlate the request revision with cache token metrics without
+        asserting causality.
     """
     ...
 

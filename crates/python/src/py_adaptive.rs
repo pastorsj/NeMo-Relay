@@ -158,6 +158,7 @@ impl PyAdaptiveRuntime {
         json_to_py(py, &report)
     }
 
+    /// Build cache diagnostics, including optional hash-only automatic-memory facts.
     #[pyo3(
         signature = (
             *,
@@ -301,6 +302,7 @@ fn parse_cache_request_facts(
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("invalid request_facts: {e}")))
 }
 
+/// Build cache telemetry and preserve optional hash-only automatic-memory facts.
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
 #[pyo3(
