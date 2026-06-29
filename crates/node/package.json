@@ -33,6 +33,10 @@
       "types": "./typed.d.ts",
       "default": "./typed.js"
     },
+    "./memory": {
+      "types": "./memory.d.ts",
+      "default": "./memory.js"
+    },
     "./plugin": {
       "types": "./plugin.d.ts",
       "default": "./plugin.js"
