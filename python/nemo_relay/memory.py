@@ -144,6 +144,34 @@ class WriteProjection(StrEnum):
     USER_AND_ASSISTANT = "user_and_assistant"
 
 
+class WriteDelivery(StrEnum):
+    """Completed-turn storage delivery path."""
+
+    INLINE = "inline"
+    BACKGROUND = "background"
+
+
+class MemoryBackpressurePolicy(StrEnum):
+    """Admission behavior when the pending memory queue is full."""
+
+    REJECT = "reject"
+    WAIT = "wait"
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryWorkQueueConfig:
+    """Bounded local queue policy for background memory work."""
+
+    capacity: int = 64
+    backpressure: MemoryBackpressurePolicy = MemoryBackpressurePolicy.REJECT
+    enqueue_timeout_millis: int = 250
+    max_attempts: int = 3
+    retry_initial_delay_millis: int = 25
+    retry_max_delay_millis: int = 1_000
+    attempt_timeout_millis: int = 2_000
+    terminal_history_capacity: int = 1_024
+
+
 @dataclass(frozen=True, slots=True)
 class AutomaticMemoryConfig:
     """Validated configuration delegated to the native automatic component."""
@@ -158,6 +186,8 @@ class AutomaticMemoryConfig:
     retrieval_policy: FailurePolicy = FailurePolicy.FAIL_OPEN
     storage_policy: FailurePolicy = FailurePolicy.FAIL_OPEN
     write_projection: WriteProjection = WriteProjection.USER_AND_ASSISTANT
+    write_delivery: WriteDelivery = WriteDelivery.INLINE
+    background_queue: MemoryWorkQueueConfig = field(default_factory=MemoryWorkQueueConfig)
     evidence_mode: EvidenceMode = EvidenceMode.REFERENCES
 
     def to_dict(self) -> JsonObject:
@@ -182,6 +212,15 @@ class InMemoryAutomaticMemory:
         """Return prepared calls still awaiting lifecycle completion."""
         return self._native.active_turns
 
+    @property
+    def background_status(self) -> JsonObject | None:
+        """Return queue state, or ``None`` when write-back is inline."""
+        return cast(JsonObject | None, self._native.background_status)
+
+    def background_job_status(self, job_id: str) -> JsonObject | None:
+        """Return retained state for one background job when available."""
+        return cast(JsonObject | None, self._native.background_job_status(job_id))
+
     def install(
         self,
         *,
@@ -200,6 +239,19 @@ class InMemoryAutomaticMemory:
             return self._native.close()
         finally:
             self._installed = False
+
+    async def flush(self, timeout_millis: int = 5_000) -> bool:
+        """Wait for work accepted before this call without closing admission."""
+        return cast(bool, await self._native.flush_background(timeout_millis))
+
+    async def drain(self, timeout_millis: int = 5_000) -> bool:
+        """Stop background admission and wait for all accepted work."""
+        return cast(bool, await self._native.drain_background(timeout_millis))
+
+    async def shutdown(self, timeout_millis: int = 5_000) -> bool:
+        """Deregister, drain, and join the optional background worker."""
+        self.close()
+        return cast(bool, await self._native.shutdown_background(timeout_millis))
 
     def __enter__(self) -> Self:
         """Install globally on context entry when not already installed."""
@@ -709,6 +761,7 @@ __all__ = [
     "MemoryErrorCode",
     "MemoryFilter",
     "MemoryMatch",
+    "MemoryBackpressurePolicy",
     "MemoryNamespace",
     "MemoryOperationError",
     "MemoryProvenance",
@@ -721,5 +774,7 @@ __all__ = [
     "MemoryStoreDisposition",
     "MemoryStoreRequest",
     "MemoryStoreResult",
+    "MemoryWorkQueueConfig",
+    "WriteDelivery",
     "WriteProjection",
 ]

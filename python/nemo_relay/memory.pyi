@@ -79,6 +79,35 @@ class WriteProjection(StrEnum):
     USER: WriteProjection
     USER_AND_ASSISTANT: WriteProjection
 
+class WriteDelivery(StrEnum):
+    INLINE: WriteDelivery
+    BACKGROUND: WriteDelivery
+
+class MemoryBackpressurePolicy(StrEnum):
+    REJECT: MemoryBackpressurePolicy
+    WAIT: MemoryBackpressurePolicy
+
+class MemoryWorkQueueConfig:
+    capacity: int
+    backpressure: MemoryBackpressurePolicy
+    enqueue_timeout_millis: int
+    max_attempts: int
+    retry_initial_delay_millis: int
+    retry_max_delay_millis: int
+    attempt_timeout_millis: int
+    terminal_history_capacity: int
+    def __init__(
+        self,
+        capacity: int = 64,
+        backpressure: MemoryBackpressurePolicy = MemoryBackpressurePolicy.REJECT,
+        enqueue_timeout_millis: int = 250,
+        max_attempts: int = 3,
+        retry_initial_delay_millis: int = 25,
+        retry_max_delay_millis: int = 1_000,
+        attempt_timeout_millis: int = 2_000,
+        terminal_history_capacity: int = 1_024,
+    ) -> None: ...
+
 class AutomaticMemoryConfig:
     namespace: MemoryNamespace | None
     search_scope: MemorySearchScope
@@ -90,6 +119,8 @@ class AutomaticMemoryConfig:
     retrieval_policy: FailurePolicy
     storage_policy: FailurePolicy
     write_projection: WriteProjection
+    write_delivery: WriteDelivery
+    background_queue: MemoryWorkQueueConfig
     evidence_mode: EvidenceMode
     def __init__(
         self,
@@ -103,6 +134,8 @@ class AutomaticMemoryConfig:
         retrieval_policy: FailurePolicy = FailurePolicy.FAIL_OPEN,
         storage_policy: FailurePolicy = FailurePolicy.FAIL_OPEN,
         write_projection: WriteProjection = WriteProjection.USER_AND_ASSISTANT,
+        write_delivery: WriteDelivery = WriteDelivery.INLINE,
+        background_queue: MemoryWorkQueueConfig = ...,
         evidence_mode: EvidenceMode = EvidenceMode.REFERENCES,
     ) -> None: ...
     def to_dict(self) -> JsonObject: ...
@@ -111,6 +144,9 @@ class InMemoryAutomaticMemory:
     def __init__(self, config: AutomaticMemoryConfig | None = None) -> None: ...
     @property
     def active_turns(self) -> int: ...
+    @property
+    def background_status(self) -> JsonObject | None: ...
+    def background_job_status(self, job_id: str) -> JsonObject | None: ...
     def install(
         self,
         *,
@@ -119,6 +155,9 @@ class InMemoryAutomaticMemory:
         scope: ScopeHandle | None = None,
     ) -> Self: ...
     def close(self) -> bool: ...
+    async def flush(self, timeout_millis: int = 5_000) -> bool: ...
+    async def drain(self, timeout_millis: int = 5_000) -> bool: ...
+    async def shutdown(self, timeout_millis: int = 5_000) -> bool: ...
     def __enter__(self) -> Self: ...
     def __exit__(
         self,

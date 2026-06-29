@@ -1071,6 +1071,13 @@ class _NativeInMemoryAutomaticMemory:
     def active_turns(self) -> int:
         """Return prepared calls still awaiting lifecycle completion."""
         ...
+    @property
+    def background_status(self) -> _JsonObject | None:
+        """Return aggregate background state, or ``None`` for inline delivery."""
+        ...
+    def background_job_status(self, job_id: str) -> _JsonObject | None:
+        """Return retained background state for one job when available."""
+        ...
     def install(
         self,
         name: str = "automatic_memory",
@@ -1081,6 +1088,15 @@ class _NativeInMemoryAutomaticMemory:
         ...
     def close(self) -> bool:
         """Deregister the owned installation once."""
+        ...
+    async def flush_background(self, timeout_millis: int = 5_000) -> bool:
+        """Wait for work accepted before this call."""
+        ...
+    async def drain_background(self, timeout_millis: int = 5_000) -> bool:
+        """Stop admission and drain accepted work."""
+        ...
+    async def shutdown_background(self, timeout_millis: int = 5_000) -> bool:
+        """Stop, drain, and join the background worker."""
         ...
 
 class AdaptiveRuntime:

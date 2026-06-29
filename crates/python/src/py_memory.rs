@@ -4,6 +4,7 @@
 //! Native reference automatic-memory wrapper for Python.
 
 use std::sync::Mutex;
+use std::time::Duration;
 
 use nemo_relay_memory::{
     AutomaticMemoryConfig, InMemoryProvider, MemoryComponent, MemoryInstallation,
@@ -11,7 +12,7 @@ use nemo_relay_memory::{
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
-use crate::convert::py_to_json;
+use crate::convert::{json_to_py, py_to_json};
 use crate::py_types::PyScopeHandle;
 
 /// Native owner for one dependency-free in-memory automatic-memory component.
@@ -80,6 +81,69 @@ impl PyInMemoryAutomaticMemory {
     fn active_turns(&self) -> usize {
         self.component.active_turns()
     }
+
+    /// Aggregate background queue state, or ``None`` for inline delivery.
+    #[getter]
+    fn background_status(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let value = serde_json::to_value(self.component.background_snapshot())
+            .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))?;
+        json_to_py(py, &value)
+    }
+
+    /// Retained background state for one job, or ``None`` when unavailable.
+    fn background_job_status(&self, py: Python<'_>, job_id: &str) -> PyResult<Py<PyAny>> {
+        let value = serde_json::to_value(self.component.background_job(job_id))
+            .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))?;
+        json_to_py(py, &value)
+    }
+
+    /// Wait for work accepted before this call.
+    #[pyo3(signature = (timeout_millis=5_000))]
+    fn flush_background<'py>(
+        &self,
+        py: Python<'py>,
+        timeout_millis: u64,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let component = self.component.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            component
+                .flush_background(checked_timeout(timeout_millis)?)
+                .await
+                .map_err(memory_runtime_error)
+        })
+    }
+
+    /// Stop admission and drain all accepted work.
+    #[pyo3(signature = (timeout_millis=5_000))]
+    fn drain_background<'py>(
+        &self,
+        py: Python<'py>,
+        timeout_millis: u64,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let component = self.component.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            component
+                .drain_background(checked_timeout(timeout_millis)?)
+                .await
+                .map_err(memory_runtime_error)
+        })
+    }
+
+    /// Stop, drain, and join the background worker.
+    #[pyo3(signature = (timeout_millis=5_000))]
+    fn shutdown_background<'py>(
+        &self,
+        py: Python<'py>,
+        timeout_millis: u64,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let component = self.component.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            component
+                .shutdown_background(checked_timeout(timeout_millis)?)
+                .await
+                .map_err(memory_runtime_error)
+        })
+    }
 }
 
 impl PyInMemoryAutomaticMemory {
@@ -90,6 +154,22 @@ impl PyInMemoryAutomaticMemory {
             )
         })
     }
+}
+
+fn checked_timeout(timeout_millis: u64) -> PyResult<Duration> {
+    if timeout_millis == 0 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "timeout_millis must be positive",
+        ));
+    }
+    Ok(Duration::from_millis(timeout_millis))
+}
+
+fn memory_runtime_error(error: nemo_relay_memory::memory::MemoryOperationError) -> PyErr {
+    pyo3::exceptions::PyRuntimeError::new_err(format!(
+        "memory background operation failed ({:?}): {}",
+        error.code, error.message
+    ))
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
