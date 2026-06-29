@@ -147,10 +147,12 @@ class TestAdaptivePluginConfiguration:
                 agent_id="test-adaptive-request-facts",
             )
             assert facts is not None
-            memory = facts["memory"]
+            memory = cast(JsonObject, facts["memory"])
             assert memory["version"] == "0.1"
             assert memory["sequence_index"] == 1
-            assert memory["hash_prefix"].startswith("sha256:")
+            hash_prefix = memory["hash_prefix"]
+            assert isinstance(hash_prefix, str)
+            assert hash_prefix.startswith("sha256:")
             assert {key: value for key, value in facts.items() if key != "memory"} == {
                 "missing_facts": ["acg_stability_unavailable"],
                 "provider": "anthropic",
