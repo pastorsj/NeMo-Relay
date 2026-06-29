@@ -1,6 +1,6 @@
 ---
-title: "Memory Runtime Design Proposal"
-description: "Proposed provider, lifecycle, evidence, cache, evaluation, and repository boundaries for NeMo Relay memory."
+title: "Memory Runtime Design and Status"
+description: "Shipped provider and automatic-memory behavior plus the staged design for queues, adapters, cache coordination, evaluation, and a demonstration."
 position: 6
 ---
 import { MermaidStyles } from "@/components/MermaidStyles";
@@ -9,33 +9,120 @@ import { MermaidStyles } from "@/components/MermaidStyles";
 SPDX-License-Identifier: Apache-2.0 */}
 
 <Warning>
-This page is a design proposal, not documentation for a shipped NeMo Relay API.
+This page combines shipped reference behavior with a staged design. The
+implementation-status section is authoritative about what is available now;
+later sections label future work explicitly.
 </Warning>
 
-This proposal defines the remaining automatic lifecycle and integration work.
-It builds on the current [Relay architecture](/about-nemo-relay/architecture),
+This design defines the shipped memory foundation and the remaining integration
+work. It builds on the current [Relay architecture](/about-nemo-relay/architecture),
 [plugin lifecycle](/about-nemo-relay/concepts/plugins),
 [event contract](/about-nemo-relay/concepts/events), and
 [Adaptive Cache Governor](/adaptive-plugin/acg).
 
 ## Implementation Status
 
-The direct provider boundary from Phase 2 is implemented. The shipped surface
-includes the following pieces:
+The provider boundary and automatic reference vertical slice are implemented.
+The shipped surface includes the following pieces:
 
 - Serializable DTOs in `nemo-relay-types::memory`
 - The object-safe provider contract and deadline-enforcing direct runtime in
   `nemo-relay-memory`
 - A deterministic, network-free in-memory provider and reusable conformance
   report
-- Contract-only Python and Node.js entry points at `nemo_relay.memory` and
+- A generic asynchronous prepare/complete lifecycle seam for ordinary
+  non-streaming managed LLM calls
+- Deterministic automatic recall, codec-aware tagged injection, synchronous
+  projected write-back, and references-only categorized evidence
+- Global, scope-local, and plugin installation backed initially by the native
+  in-memory provider
+- Typed Python and Node.js reference components at `nemo_relay.memory` and
   `nemo-relay-node/memory`
 
-This implementation does not install memory into the managed agent lifecycle.
-Automatic retrieval and write-back, plugin activation, ATOF evidence,
-background maintenance, cache coordination, OSS adapters, evaluation, and the
-agent UI demonstration remain proposed work. Constructing `MemoryRuntime`
-provides direct provider access only.
+`MemoryRuntime` still provides direct provider access only. Automatic behavior
+starts only after an application installs `MemoryComponent`,
+`InMemoryAutomaticMemory`, or the built-in `memory` plugin component. The
+following remain future work: background queues and maintenance, arbitrary
+Python/Node provider bridges, OSS adapters, prompt-cache coordination,
+attribution and evaluation, and the agent UI demonstration. Streaming managed
+LLM calls reject visible lifecycle hooks instead of applying partial memory
+behavior.
+
+## Reference-Mode Setup
+
+Each primary binding installs one component and then uses its ordinary managed
+LLM API. Agent code does not call search or store.
+
+### Python
+
+```python
+from nemo_relay import LLMRequest, codecs, llm, memory
+
+component = memory.InMemoryAutomaticMemory(
+    memory.AutomaticMemoryConfig(
+        namespace=memory.MemoryNamespace("demo", "alex"),
+    )
+).install()
+
+try:
+    result = await llm.execute(
+        "provider",
+        LLMRequest({}, {
+            "model": "demo-model",
+            "messages": [{"role": "user", "content": "What do I prefer?"}],
+        }),
+        call_provider,
+        codec=codecs.OpenAIChatCodec(),
+        response_codec=codecs.OpenAIChatCodec(),
+    )
+finally:
+    component.close()
+```
+
+### Node.js
+
+```javascript
+const relay = require('nemo-relay-node');
+const { InMemoryAutomaticMemory } = require('nemo-relay-node/memory');
+
+const component = new InMemoryAutomaticMemory({
+  namespace: { tenantId: 'demo', subjectId: 'alex' },
+}).install();
+
+try {
+  const codec = new relay.OpenAIChatCodec();
+  const result = await relay.llmCallExecuteAsync(
+    'provider', request, callProvider,
+    null, null, null, null, null,
+    codec.decode.bind(codec),
+    (payload) => codec.encode(payload.annotated, payload.original),
+    codec.decodeResponse.bind(codec),
+  );
+} finally {
+  component.close();
+}
+```
+
+### Rust
+
+```rust
+let component = MemoryComponent::new(
+    InMemoryProvider::new(),
+    AutomaticMemoryConfig {
+        namespace: Some(MemoryNamespace::new("demo", "alex")?),
+        ..AutomaticMemoryConfig::default()
+    },
+)?;
+let _installation = component.install_global("memory", 0)?;
+
+// The provider callback receives the prepared request. No search/store call is
+// present at this call site.
+let result = llm_call_execute(params_with_openai_chat_codec).await?;
+```
+
+The Python and Node `MemoryProvider` contracts describe future adapter
+implementations. Those language-defined objects cannot yet be passed to the
+native automatic component.
 
 ## Problem and Goals
 
@@ -44,12 +131,12 @@ component. The agent should not need to call a provider-specific retrieval API,
 copy retrieved text into every prompt, or remember to store outcomes after each
 turn.
 
-The proposed runtime will:
+The staged runtime design will:
 
 - Present one provider-neutral contract across local stores, remote services,
   temporal graphs, and organizational learning systems
-- Retrieve bounded context before a managed LLM callback and queue configured
-  write-back after the callback
+- Retrieve bounded context before a managed LLM callback, write back the
+  configured projection, and later support a bounded background handoff
 - Keep tenant and subject identity explicit across concurrent agents
 - Record which items were retrieved, injected, cited, or attributed without
   overstating causality
@@ -88,25 +175,25 @@ The following table compares four possible integration boundaries.
 
 Select **companion memory crate plus plugin automation**.
 
-Serializable provider-neutral DTOs will live in `nemo-relay-types`. A new
-`nemo-relay-memory` crate will own the provider contract, in-memory reference
-implementation, provider factory registry, conformance helpers, automatic
-component, queue, and background lifecycle. The existing plugin system will
-validate, initialize, report, replace, and clear the component. The component
-will register cleanup for queue drain and provider shutdown instead of creating
-a second plugin lifecycle.
+Serializable provider-neutral DTOs live in `nemo-relay-types`.
+`nemo-relay-memory` owns the provider contract, in-memory reference
+implementation, conformance helpers, and automatic component. Later phases add
+provider factories, a bounded queue, and background lifecycle to the same crate.
+The existing plugin system validates, initializes, reports, replaces, and
+clears components; future queue drain and provider shutdown reuse that lifecycle
+instead of creating a second one.
 
-Python will expose the feature through `nemo_relay.memory`, and Node.js will
-expose it through `nemo-relay-node/memory` in their existing distributions.
+Python exposes the reference feature through `nemo_relay.memory`, and Node.js
+exposes it through `nemo-relay-node/memory` in their existing distributions.
 Rust, Python, and Node.js are the primary implementation targets. Provider SDKs
-will remain optional extras or service adapters.
+remain optional extras or service adapters.
 
 ## Package and Repository Boundaries
 
 | Owner | Proposed Responsibility |
 | --- | --- |
 | `nemo-relay-types` | Serializable memory DTOs, capability declarations, operation results, and event profile data shared by core, bindings, native plugins, and worker protocols. |
-| `nemo-relay-memory` | Async provider contract, reference provider, factories, automatic policy, deterministic selection, write projection, bounded queue, maintainers, and conformance tests. |
+| `nemo-relay-memory` | Shipped async provider contract, reference provider, automatic policy, deterministic selection, write projection, and conformance tests; future provider factories, bounded queue, and maintainers. |
 | NeMo Relay core and plugin crates | Generic categorized mark support, plugin activation and cleanup hooks, scopes, middleware ordering, subscribers, and exporters. |
 | Python and Node.js distributions | Ergonomic `nemo_relay.memory` and `nemo-relay-node/memory` entry points without mandatory vendor dependencies. |
 | Optional adapters | Provider-specific SDK or service mappings, capability differences, and native metadata preservation. |
@@ -126,12 +213,12 @@ declare typed capabilities for update, delete or forget, batch ingestion,
 reflect or consolidate, feedback or attribution, and health. Callers must check
 `MemoryCapabilities` rather than inferring support from a provider name.
 
-The neutral vocabulary will include `MemoryNamespace`, `MemoryQuery`,
-`MemoryItem`, `MemoryWrite`, `MemoryProvenance`, `MemoryCapabilities`, and
-`MemoryOperationError`. Terms such as bank, graph, episode, or dataset belong
-inside adapters.
+The neutral vocabulary includes `MemoryNamespace`, `MemorySearchRequest`,
+`MemoryRecord`, `MemoryStoreRequest`, `MemoryProvenance`,
+`MemoryCapabilities`, and `MemoryOperationError`. Terms such as bank, graph,
+episode, or dataset belong inside adapters.
 
-A returned `MemoryItem` will preserve:
+A returned `MemoryRecord` preserves:
 
 - Provider name and stable provider item ID
 - Score and rank
@@ -140,48 +227,76 @@ A returned `MemoryItem` will preserve:
 - Structured `MemoryProvenance`
 - Neutral metadata and a provider-native metadata escape hatch
 
-Provider and automation errors will be typed. Retrieval will default to a
+Provider and automation errors are typed. Retrieval defaults to a
 deadline-bounded fail-open policy after identity has been resolved: the model
-call continues without memory if the provider is unavailable. Asynchronous
-storage will default to bounded queueing with observable overflow and delivery
-failures. Both policies will be configurable. Memory processing will preserve
-the managed callback's result unless an explicit blocking policy says otherwise.
+call continues without memory if the provider is unavailable. Shipped storage
+is awaited and defaults to fail open. A later bounded queue will make overflow
+and delivery failures observable. Memory processing preserves the managed
+callback's result unless an explicit fail-closed policy says otherwise.
 
 ## Identity and Isolation
 
-`MemoryNamespace` will contain required `tenant_id` and `subject_id` fields and
+`MemoryNamespace` contains required `tenant_id` and `subject_id` fields and
 optional `session_id` and `agent_id` fields. A demo can configure a named local
 tenant. Automatic mode does not invent a subject.
 
-Identity resolution will use this precedence:
+Shipped automatic identity resolution uses this precedence:
 
 1. Per-call override
 2. Active scope metadata
-3. Component-supplied resolver
+3. Component-supplied static namespace
 
-If a required identity is absent, the component will emit a typed failure fact
-and apply its configured policy. Production defaults will fail closed for
-isolation. A demo can explicitly choose fail-open behavior. Concurrent-isolation
-tests must prove that no result crosses a `tenant_id` or `subject_id` boundary.
+The control object is `metadata.memory`, with optional `enabled` and `namespace`
+fields. Tenant and subject are required. If either is absent, the component
+emits a typed failure fact and applies its configured policy. Identity defaults
+to fail closed for isolation. A demo can explicitly choose fail-open behavior.
+Concurrent-isolation tests prove that no result crosses a `tenant_id` or
+`subject_id` boundary.
 
 ## Automatic Retrieval and Write-Back
 
-Automatic retrieval will operate at managed LLM boundaries. A call or visible
-scope can opt out; scope-local policy will override global defaults using the
-same visibility rules as other Relay middleware.
+Automatic retrieval operates at ordinary non-streaming managed LLM boundaries.
+A call or visible scope can set `metadata.memory.enabled=false`; the call then
+performs no search, injection, or write. Streaming calls reject a visible
+lifecycle hook explicitly.
 
-The query will use the latest non-memory user content plus an optional
-configured turn or tool summary. It will never query an already injected memory
-envelope. Selection will be deterministic: filter, deduplicate by provider,
-item, and provenance identity, rank, and then enforce item and token budgets.
+The query uses the latest non-memory user content. It never queries an already
+injected memory envelope. Selection is deterministic: validate the provider
+result, deduplicate stable memory IDs, preserve score order with stable-ID tie
+breaking, and then enforce item and estimated-token budgets.
 
-Provider codecs will render a dedicated tagged memory block immediately before
-the triggering user turn. Stable system and developer instructions will remain
-ahead of that volatile block. Write projection will exclude tagged injected
-blocks, preventing recursive memory pollution, and will store only configured
-transcript or outcome data.
+The call's request codec renders a versioned `<relay_memory>` block as explicitly
+untrusted context and prepends it to the triggering user content. Stable system
+and developer instructions remain ahead of that volatile block. The callback
+and LLM start event receive the same prepared request. Write projection retains
+the original user content and, by default, normalized assistant content; it
+excludes tagged injected blocks to prevent recursive memory pollution.
 
-The following diagram shows the proposed hot path and asynchronous handoff.
+The exact non-streaming order is conditional guardrails, request intercepts,
+ascending-priority lifecycle preparation, start-event sanitization/emission,
+execution intercepts and provider callback, reverse-order lifecycle completion,
+then response sanitization/end-event emission. Phase 3 awaits the provider store
+inside lifecycle completion before returning the callback result. Retrieval and
+storage have independent fail-open/fail-closed policies, and providers own any
+retry behavior.
+
+The reference component uses these defaults:
+
+| Setting | Default |
+| --- | --- |
+| Search scope | Subject within the required tenant/subject partition |
+| Provider candidates | 20 |
+| Injected items | 5 |
+| Estimated injected tokens | 512 |
+| Search and store timeout | 2,000 milliseconds each |
+| Missing identity | Fail closed |
+| Retrieval or injection failure | Fail open |
+| Storage failure | Fail open |
+| Write projection | Original user and normalized assistant content |
+| Evidence capture | References only |
+
+The following diagram separates the shipped hot path from the future background
+handoff.
 
 <MermaidStyles />
 
@@ -192,47 +307,49 @@ flowchart LR
     Search --> Select[Filter, deduplicate, rank, and budget]
     Select --> Inject[Codec-aware tagged injection]
     Inject --> Callback[Existing managed callback pipeline]
-    Callback --> Result[Return callback result]
-    Callback --> Queue[Queue projected write]
-    Queue --> Store[Provider store]
-    Store --> Async[Async evaluation and maintenance]
-    Async --> Store
+    Callback --> Complete[Lifecycle completion]
+    Complete --> Store[Await projected provider store]
+    Store --> Result[Return callback result]
+    Complete -. future bounded handoff .-> Queue[Background queue]
+    Queue -. future .-> Async[Evaluation and maintenance]
+    Async -. derived writes .-> Store
 
     class Request purple-lightest;
-    class Identity,Search,Select,Inject,Queue,Store green-light;
+    class Identity,Search,Select,Inject,Complete,Store green-light;
     class Callback green;
     class Result yellow-lightest;
-    class Async blue-lightest;
+    class Queue,Async blue-lightest;
 ```
 
 ## ATOF Evidence and Privacy
 
-The implementation will extend the generic mark-event surface to accept
-optional `EventCategory`, `CategoryProfile`, and `DataSchema` values. It will
-not add a memory-only event bypass.
+The implementation extends the generic mark-event surface with optional
+category, category profile, data schema, and LLM-parent values. It does not add
+a memory-only event bypass.
 
-Completed operations will emit versioned marks with category `memory`, an
-operation subtype (`retrieval`, `injection`, `citation`, `attribution`,
-`storage`, `maintenance`, `failure`, or `evaluation`), and data schema
-`nemo.relay.memory.operation` version `0.1`. One operation mark will carry
-timing, status, policy, provider, a namespace reference, item references,
-ranks or scores, and correlation IDs. The managed LLM scope will remain the
-parent. Evaluation can also use the existing evaluator scope category.
+Shipped operations emit versioned marks with category `memory`, subtypes
+`retrieval`, `injection`, `storage`, and `failure`, and data schema
+`nemo.relay.memory.operation` version `0.1`. Marks carry status, policy,
+provider, a hashed namespace reference, item references, ranks or scores,
+content hashes and lengths, latency where measured, and correlation IDs. The
+managed LLM call is the parent. `storage` with status `skipped` distinguishes
+callback failure or missing writable content from a successful store.
 
-The default capture mode will be `references`: stable IDs, hashes, lengths,
-scores, and provenance without raw memory or query text. Explicit
-`redacted_content` and `content` modes will pass through existing sanitization
-and redaction policy. Export and retention guidance must treat memory evidence
-as potentially sensitive even when it contains references only.
+The only shipped capture mode is `references`: stable IDs, hashes, lengths,
+scores, and provider references without raw memory, query, or answer text. Raw
+or redacted content modes are not supported. Export and retention policy must
+still treat references-only evidence as potentially sensitive.
 
-Evidence will keep these states separate:
+Evidence keeps these states separate:
 
-| State | What Relay Can Claim |
-| --- | --- |
-| Retrieved | The provider returned the item. |
-| Injected | Selection placed the item in the real model request. |
-| Cited | The response explicitly referenced the item through a supported citation mechanism. |
-| Attributed | An evaluator judged the item relevant to the response, with a recorded method and confidence. |
+| State | Shipped | What Relay Can Claim |
+| --- | --- | --- |
+| Retrieved | Yes | The provider returned the item. |
+| Injected | Yes | Selection placed the item in the real model request. |
+| Stored | Yes | The configured original-turn projection reached the provider. |
+| Failed | Yes | A named memory stage failed under the recorded policy. |
+| Cited | No | A future supported citation mechanism explicitly referenced the item. |
+| Attributed | No | A future evaluator judged the item relevant, with a recorded method and confidence. |
 
 Retrieval is not use. Strong causal claims require a paired ablation that runs
 the same case without the candidate memory. If operation marks prove
@@ -319,11 +436,13 @@ requirements rather than relying on a single aggregate benchmark score.
 
 Implement and validate the proposal in the following order:
 
-1. Freeze neutral DTOs, provider capabilities, identity, and event examples.
-2. Add `nemo-relay-memory`, an in-memory reference provider, and conformance
-   tests without automatic middleware.
-3. Add deterministic automatic retrieval, tagged injection, write projection,
-   operation evidence, and binding parity for Rust, Python, and Node.js.
+1. **Complete:** Freeze neutral DTOs, provider capabilities, identity, and
+   event examples.
+2. **Complete:** Add `nemo-relay-memory`, an in-memory reference provider, and
+   conformance tests without automatic middleware.
+3. **Complete:** Add deterministic automatic retrieval, tagged injection,
+   write projection, operation evidence, and binding parity for Rust, Python,
+   and Node.js.
 4. Add the supervised queue and maintainer boundary, then verify drain,
    idempotency, and worker-plugin operation.
 5. Coordinate Prompt IR placement and cache diagnostics without merging storage

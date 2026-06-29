@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Provider-neutral memory contract types for Python adapters.
+"""Provider-neutral memory contracts and native automatic reference mode.
 
 This module exposes the direct search/store contract and canonical wire
-conversion helpers. Automatic recall, plugin activation, and the reference
-provider are implemented by later runtime phases.
+conversion helpers plus an in-memory native component for automatic recall,
+write-back, and privacy-safe evidence around managed LLM calls.
 """
 
 from __future__ import annotations

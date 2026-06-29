@@ -153,14 +153,20 @@ That split lets long-lived defaults coexist with request-specific or task-specif
 
 ## Managed Execution Pipeline
 
-Managed tool and LLM execution follows the same high-level order:
+Managed tool and LLM execution follows the same high-level order. Non-streaming
+LLM calls also have an asynchronous lifecycle seam used by components such as
+automatic memory:
 
 1. Conditional-execution guardrails decide whether work can proceed.
 2. Request intercepts can rewrite the real request.
-3. Sanitize-request guardrails can rewrite the emitted start-event payload.
-4. Execution intercepts wrap or replace the user callback.
-5. The user callback runs.
-6. Sanitize-response guardrails can rewrite the emitted end-event payload.
+3. Non-streaming LLM lifecycle preparation hooks can asynchronously transform
+   the request before its start event.
+4. Sanitize-request guardrails can rewrite the emitted start-event payload.
+5. Execution intercepts wrap or replace the user callback.
+6. The user callback runs.
+7. Non-streaming LLM lifecycle completion hooks observe success or failure and
+   can finish owned work, such as configured memory write-back.
+8. Sanitize-response guardrails can rewrite the emitted end-event payload.
 
 Two distinctions matter:
 
@@ -210,6 +216,9 @@ cargo add nemo-relay
 # Rust direct memory provider API and reference implementation
 cargo add nemo-relay-memory
 
+# Add the opt-in automatic managed-LLM component
+cargo add nemo-relay-memory --features relay
+
 # Python application SDK
 uv add nemo-relay
 
@@ -227,12 +236,16 @@ prerequisites, supported versions, framework extras, and package-manager
 commands. Refer to [Plugin Configuration Files](/build-plugins/plugin-configuration-files)
 for plugin file discovery and precedence.
 
-The shipped memory surface is a direct Rust provider API and deterministic
-in-memory reference implementation. It does not activate automatic recall or
-write-back. Refer to the generated
+The shipped memory surface includes a direct Rust provider API, deterministic
+in-memory reference implementation, and opt-in automatic recall/write-back for
+ordinary non-streaming managed LLM calls. Python exposes the native reference
+component from `nemo_relay.memory`; Node.js exposes it from
+`nemo-relay-node/memory`. Refer to the generated
 [`nemo-relay-memory` library reference](/reference/api/rust-library-reference/nemo-relay-memory)
-for its provider, runtime, and conformance symbols. The broader automatic
-integration remains a [design proposal](/contribute/memory-runtime-design).
+for its provider, runtime, conformance, and automatic-component symbols. The
+[memory runtime design and status](/contribute/memory-runtime-design) separates
+this shipped vertical slice from future queues, adapters, cache coordination,
+evaluation, and UI work.
 
 ## Runtime Outputs
 
@@ -263,7 +276,7 @@ The following table maps repository paths to their responsibilities.
 | --- | --- |
 | `crates/core` | Scope, managed execution, middleware, events, subscribers, and runtime behavior. |
 | `crates/types` | Shared event, plugin, and cross-crate data types. |
-| `crates/memory` | Direct provider-neutral memory runtime, deterministic in-memory provider, and adapter conformance helpers. |
+| `crates/memory` | Provider-neutral memory runtime, deterministic in-memory provider, conformance helpers, and opt-in automatic managed-LLM component. |
 | `crates/plugin` | Plugin contracts, configuration, validation, and lifecycle. |
 | `crates/worker-proto` and `crates/worker` | Protocol definitions and runtime support for out-of-process plugin workers. |
 | `crates/adaptive` | Adaptive runtime primitives and plugin components. |
