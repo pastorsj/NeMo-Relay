@@ -1571,6 +1571,7 @@ version = "0.5.0"
 dependencies = [
  "futures-util",
  "hyper-util",
+ "nemo-relay-memory",
  "nemo-relay-types",
  "nemo-relay-worker-proto",
  "serde",
