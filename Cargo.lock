@@ -1462,8 +1462,11 @@ name = "nemo-relay-memory"
 version = "0.5.0"
 dependencies = [
  "async-trait",
+ "nemo-relay",
  "nemo-relay-types",
+ "serde",
  "serde_json",
+ "sha2",
  "tokio",
 ]
 

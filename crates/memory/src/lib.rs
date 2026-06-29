@@ -11,13 +11,26 @@
 //! Dropping an operation future is the cancellation mechanism; providers must not
 //! publish partial mutations before a cancellation-safe commit point.
 
+#[cfg(feature = "relay")]
+pub mod automatic;
 pub mod conformance;
+#[cfg(feature = "relay")]
+pub mod evidence;
 pub mod in_memory;
+#[cfg(feature = "relay")]
+pub mod plugin;
 pub mod provider;
 pub mod runtime;
 
+#[cfg(feature = "relay")]
+pub use automatic::{
+    AutomaticMemoryConfig, EvidenceMode, FailurePolicy, MemoryComponent, MemoryInstallation,
+    WriteProjection,
+};
 pub use conformance::{ConformanceCase, ConformanceReport, run_provider_conformance};
 pub use in_memory::InMemoryProvider;
 pub use nemo_relay_types::memory;
+#[cfg(feature = "relay")]
+pub use plugin::{MEMORY_PLUGIN_KIND, register_memory_component};
 pub use provider::{MemoryProvider, MemoryProviderResult};
 pub use runtime::MemoryRuntime;
