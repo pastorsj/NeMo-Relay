@@ -12,12 +12,30 @@ SPDX-License-Identifier: Apache-2.0 */}
 This page is a design proposal, not documentation for a shipped NeMo Relay API.
 </Warning>
 
-This proposal defines the boundary to test before choosing final Rust symbols or
-binding signatures. It builds on the current [Relay architecture](/about-nemo-relay/architecture),
+This proposal defines the remaining automatic lifecycle and integration work.
+It builds on the current [Relay architecture](/about-nemo-relay/architecture),
 [plugin lifecycle](/about-nemo-relay/concepts/plugins),
 [event contract](/about-nemo-relay/concepts/events), and
-[Adaptive Cache Governor](/adaptive-plugin/acg). Phase 2 owns the concrete API
-design.
+[Adaptive Cache Governor](/adaptive-plugin/acg).
+
+## Implementation Status
+
+The direct provider boundary from Phase 2 is implemented. The shipped surface
+includes the following pieces:
+
+- Serializable DTOs in `nemo-relay-types::memory`
+- The object-safe provider contract and deadline-enforcing direct runtime in
+  `nemo-relay-memory`
+- A deterministic, network-free in-memory provider and reusable conformance
+  report
+- Contract-only Python and Node.js entry points at `nemo_relay.memory` and
+  `nemo-relay-node/memory`
+
+This implementation does not install memory into the managed agent lifecycle.
+Automatic retrieval and write-back, plugin activation, ATOF evidence,
+background maintenance, cache coordination, OSS adapters, evaluation, and the
+agent UI demonstration remain proposed work. Constructing `MemoryRuntime`
+provides direct provider access only.
 
 ## Problem and Goals
 

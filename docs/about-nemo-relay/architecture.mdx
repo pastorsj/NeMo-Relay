@@ -207,6 +207,9 @@ control:
 # Rust application SDK
 cargo add nemo-relay
 
+# Rust direct memory provider API and reference implementation
+cargo add nemo-relay-memory
+
 # Python application SDK
 uv add nemo-relay
 
@@ -223,6 +226,13 @@ Gateway and CLI plugin behavior can also be activated from a project-level
 prerequisites, supported versions, framework extras, and package-manager
 commands. Refer to [Plugin Configuration Files](/build-plugins/plugin-configuration-files)
 for plugin file discovery and precedence.
+
+The shipped memory surface is a direct Rust provider API and deterministic
+in-memory reference implementation. It does not activate automatic recall or
+write-back. Refer to the generated
+[`nemo-relay-memory` library reference](/reference/api/rust-library-reference/nemo-relay-memory)
+for its provider, runtime, and conformance symbols. The broader automatic
+integration remains a [design proposal](/contribute/memory-runtime-design).
 
 ## Runtime Outputs
 
@@ -253,6 +263,7 @@ The following table maps repository paths to their responsibilities.
 | --- | --- |
 | `crates/core` | Scope, managed execution, middleware, events, subscribers, and runtime behavior. |
 | `crates/types` | Shared event, plugin, and cross-crate data types. |
+| `crates/memory` | Direct provider-neutral memory runtime, deterministic in-memory provider, and adapter conformance helpers. |
 | `crates/plugin` | Plugin contracts, configuration, validation, and lifecycle. |
 | `crates/worker-proto` and `crates/worker` | Protocol definitions and runtime support for out-of-process plugin workers. |
 | `crates/adaptive` | Adaptive runtime primitives and plugin components. |
