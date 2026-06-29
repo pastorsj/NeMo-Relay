@@ -172,6 +172,13 @@ func TestAdaptiveRuntimeBuildCacheRequestFacts(t *testing.T) {
 	if facts.Memory == nil || facts.Memory.Version != "0.1" || facts.Memory.SequenceIndex != 0 || !strings.HasPrefix(facts.Memory.HashPrefix, "sha256:") {
 		t.Fatalf("unexpected memory cache facts: %#v", facts.Memory)
 	}
+	serializedFacts, err := json.Marshal(facts)
+	if err != nil {
+		t.Fatalf("marshal cache request facts: %v", err)
+	}
+	if strings.Contains(string(serializedFacts), "User prefers concise summaries") || strings.Contains(string(serializedFacts), "Find sources about caching") {
+		t.Fatalf("cache request facts leaked prompt content: %s", serializedFacts)
+	}
 }
 
 func TestAdaptiveRuntimeBindScopeRejectsNilScope(t *testing.T) {

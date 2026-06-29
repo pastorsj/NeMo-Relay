@@ -217,6 +217,26 @@ fn test_from_usage_copies_memory_facts_for_hits_and_misses_without_causal_claims
         let json = serde_json::to_string(&event).expect("event should serialize");
         assert!(!json.contains("memory text"));
     }
+
+    let write_event = CacheTelemetryEvent::from_usage(
+        Uuid::nil(),
+        sample_agent_identity(),
+        CacheTelemetryProvider::Anthropic,
+        &Usage {
+            prompt_tokens: Some(300),
+            completion_tokens: None,
+            total_tokens: None,
+            cache_read_tokens: Some(0),
+            cache_write_tokens: Some(700),
+            cost: None,
+        },
+        sample_timestamp(),
+        Some(&request_facts),
+    )
+    .expect("anthropic cache write should produce telemetry");
+    assert_eq!(write_event.cache_creation_tokens, 700);
+    assert_eq!(write_event.miss_reason, Some(CacheMissReason::ColdStart));
+    assert_eq!(write_event.memory, Some(memory));
 }
 
 #[test]

@@ -117,6 +117,7 @@ describe('adaptive runtime bridge', () => {
       assert.equal(facts.memory.version, '0.1');
       assert.equal(facts.memory.sequence_index, 0);
       assert.match(facts.memory.hash_prefix, /^sha256:[0-9a-f]{12}$/);
+      assert.doesNotMatch(JSON.stringify(facts), /User prefers concise summaries|Find sources about caching/);
       const factsWithoutMemory = { ...facts };
       delete factsWithoutMemory.memory;
       assert.deepEqual(factsWithoutMemory, {

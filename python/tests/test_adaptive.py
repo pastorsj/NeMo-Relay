@@ -3,6 +3,7 @@
 
 """Tests for the adaptive plugin component API."""
 
+import json
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import cast
@@ -153,6 +154,9 @@ class TestAdaptivePluginConfiguration:
             hash_prefix = memory["hash_prefix"]
             assert isinstance(hash_prefix, str)
             assert hash_prefix.startswith("sha256:")
+            serialized_facts = json.dumps(facts)
+            assert "User prefers concise summaries" not in serialized_facts
+            assert "Find sources about caching" not in serialized_facts
             assert {key: value for key, value in facts.items() if key != "memory"} == {
                 "missing_facts": ["acg_stability_unavailable"],
                 "provider": "anthropic",
