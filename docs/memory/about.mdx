@@ -16,6 +16,9 @@ NeMo Relay memory separates two ways of using memory:
   `MemoryProvider` contract for explicit search, store, conformance, and
   maintenance workflows. Mem0 OSS, Hindsight, Graphiti OSS, and Cognee are
   implemented profiles.
+- **Organizational learning** uses the separate Node.js Hivemind profile to
+  capture consented Relay traces and discover derived summaries or skills.
+  Hivemind is not presented as generic fact or vector CRUD.
 
 The provider contract always partitions data by `tenant_id` and `subject_id`.
 Optional session and agent identity can narrow a search, but cannot broaden it.
@@ -64,8 +67,10 @@ Direct Python providers cannot currently be passed to
 provider. A future bridge can connect the same Python contract to automatic
 execution without changing adapter semantics.
 
-See [Memory Providers](/memory/providers) for installation, mappings, exact
-capabilities, conformance, and current limitations. See
+Refer to [Memory Providers](/memory/providers) for installation, mappings,
+exact capabilities, conformance, and current limitations. Refer to
+[Organizational Learning with Hivemind](/memory/hivemind) for trace capture,
+workspace privacy, derived artifacts, and the two-agent flow. Refer to
 [Memory Runtime Design and Status](/contribute/memory-runtime-design) for the
 runtime architecture, lifecycle evidence, background queue, maintenance
 interface, and prompt-cache boundary.

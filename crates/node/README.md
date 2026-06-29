@@ -46,8 +46,9 @@ should install it from npm rather than depend on the Rust crate directly.
 - ✅ **Observability exporters**: Subscriber and exporter support for common
   runtime telemetry flows.
 - ✅ **Additional entry points**: `nemo-relay-node/typed`,
-  `nemo-relay-node/plugin`, `nemo-relay-node/adaptive`, and
-  `nemo-relay-node/observability`.
+  `nemo-relay-node/plugin`, `nemo-relay-node/adaptive`,
+  `nemo-relay-node/observability`, `nemo-relay-node/memory`, and
+  `nemo-relay-node/hivemind`.
 
 ## Installation
 
@@ -93,7 +94,10 @@ main().catch((error) => {
 
 The main runtime API is exported from `nemo-relay-node`. Additional entry points
 are available at `nemo-relay-node/typed`, `nemo-relay-node/plugin`,
-`nemo-relay-node/adaptive`, and `nemo-relay-node/observability`.
+`nemo-relay-node/adaptive`, `nemo-relay-node/observability`,
+`nemo-relay-node/memory`, and `nemo-relay-node/hivemind`. The Hivemind entry
+point is a dependency-free bridge to an independently installed Activeloop
+Hivemind environment; it does not add Hivemind to the default package install.
 
 ## Documentation
 

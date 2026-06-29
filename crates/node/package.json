@@ -37,6 +37,10 @@
       "types": "./memory.d.ts",
       "default": "./memory.js"
     },
+    "./hivemind": {
+      "types": "./hivemind.d.ts",
+      "default": "./hivemind.js"
+    },
     "./plugin": {
       "types": "./plugin.d.ts",
       "default": "./plugin.js"
