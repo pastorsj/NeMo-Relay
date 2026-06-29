@@ -22,6 +22,7 @@ pub mod maintainer;
 pub mod plugin;
 pub mod provider;
 pub mod runtime;
+pub mod work_queue;
 
 #[cfg(feature = "relay")]
 pub use automatic::{
@@ -38,3 +39,8 @@ pub use nemo_relay_types::memory;
 pub use plugin::{MEMORY_PLUGIN_KIND, register_memory_component};
 pub use provider::{MemoryProvider, MemoryProviderResult};
 pub use runtime::MemoryRuntime;
+pub use work_queue::{
+    MemoryBackpressurePolicy, MemoryJobState, MemoryJobStatus, MemoryWorkKind, MemoryWorkObserver,
+    MemoryWorkOutcome, MemoryWorkQueue, MemoryWorkQueueConfig, MemoryWorkQueueSnapshot,
+    MemoryWorkReceipt, MemoryWorkTransition,
+};
