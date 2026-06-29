@@ -493,6 +493,8 @@ def _to_wire(value: object, *, omit_empty: bool = True) -> Json:
         for field_info in fields(value):
             field_value = getattr(value, field_info.name)
             if field_value is None:
+                if isinstance(value, MemoryContent) and value.kind == "json" and field_info.name == "value":
+                    output[field_info.name] = None
                 continue
             if omit_empty and field_value in ((), [], {}):
                 continue

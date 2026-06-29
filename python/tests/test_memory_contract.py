@@ -79,6 +79,25 @@ def test_json_and_reference_content_keep_nested_provider_values():
     assert memory.MemoryContent.from_dict(reference_content.to_dict()) == reference_content
 
 
+def test_json_null_content_is_not_confused_with_an_absent_optional_field():
+    content = memory.MemoryContent.json_content(None)
+
+    assert content.to_dict() == {"kind": "json", "value": None}
+    assert memory.MemoryContent.from_dict(content.to_dict()) == content
+
+
+def test_store_request_preserves_nested_json_null_content():
+    request = memory.MemoryStoreRequest(
+        context=memory.MemoryRequestContext("store-null"),
+        namespace=memory.MemoryNamespace("tenant", "subject"),
+        content=memory.MemoryContent.json_content(None),
+        event_timestamp=datetime(2026, 6, 29, 11, 55, tzinfo=timezone.utc),
+        provenance=memory.MemoryProvenance(source="test"),
+    )
+
+    assert request.to_dict()["content"] == {"kind": "json", "value": None}
+
+
 async def test_runtime_checkable_provider_protocol_executes_required_methods(contract_fixture: JsonObject):
     result_data = cast(JsonObject, contract_fixture["search_result"])
     store_data = cast(JsonObject, contract_fixture["store_result"])
