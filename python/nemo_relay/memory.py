@@ -73,6 +73,14 @@ class MemoryContractError(ValueError):
         self.error = error
 
 
+class MemoryProviderError(RuntimeError):
+    """Raised when a provider operation returns a canonical memory failure."""
+
+    def __init__(self, error: MemoryOperationError) -> None:
+        super().__init__(error.message)
+        self.error = error
+
+
 @dataclass(frozen=True, slots=True)
 class MemoryNamespace:
     """Tenant and subject partition plus optional origin context."""
@@ -604,6 +612,115 @@ class MemoryCapabilities:
         return cast(JsonObject, _to_wire(self, omit_empty=False))
 
 
+class MemoryMaintenanceAction(StrEnum):
+    """Provider maintenance operation."""
+
+    REFLECT = "reflect"
+    CONSOLIDATE = "consolidate"
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryMaintenanceWindow:
+    """Bounded source view consumed by one maintenance operation."""
+
+    checkpoint_id: str
+    query: str
+    limit: int
+    previous_checkpoint_id: str | None = None
+    scope: MemorySearchScope = MemorySearchScope.SUBJECT
+    filter: MemoryFilter = field(default_factory=MemoryFilter)
+
+    def validate(self, namespace: MemoryNamespace) -> None:
+        """Validate checkpoint identity and bounded source selection."""
+        _validate_identifier("checkpoint_id", self.checkpoint_id)
+        _validate_optional_identifier("previous_checkpoint_id", self.previous_checkpoint_id)
+        if self.previous_checkpoint_id == self.checkpoint_id:
+            _raise_invalid("previous_checkpoint_id must differ from checkpoint_id")
+        self.scope.validate(namespace)
+        _validate_identifier("maintenance window query", self.query)
+        if not 1 <= self.limit <= MAX_SEARCH_LIMIT:
+            _raise_invalid(f"maintenance window limit must be in 1..={MAX_SEARCH_LIMIT}")
+        self.filter.validate()
+
+    @classmethod
+    def from_dict(cls, data: JsonObject, namespace: MemoryNamespace) -> MemoryMaintenanceWindow:
+        """Decode and validate a maintenance window from canonical wire data."""
+        window = cls(
+            checkpoint_id=_require_str(data, "checkpoint_id"),
+            previous_checkpoint_id=_optional_str(data.get("previous_checkpoint_id")),
+            query=_require_str(data, "query"),
+            scope=MemorySearchScope(str(data.get("scope", "subject"))),
+            filter=MemoryFilter.from_dict(_json_object(data.get("filter", {}))),
+            limit=_require_int(data, "limit"),
+        )
+        window.validate(namespace)
+        return window
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryMaintenanceRequest:
+    """Request for a provider that advertises maintenance capability."""
+
+    context: MemoryRequestContext
+    namespace: MemoryNamespace
+    action: MemoryMaintenanceAction
+    window: MemoryMaintenanceWindow | None = None
+    parameters: JsonObject = field(default_factory=dict)
+
+    def validate(self) -> None:
+        """Validate operation context, identity, and optional source window."""
+        self.context.validate()
+        self.namespace.validate()
+        if self.window is not None:
+            self.window.validate(self.namespace)
+
+    @classmethod
+    def from_dict(cls, data: JsonObject) -> MemoryMaintenanceRequest:
+        """Decode and validate a maintenance request from canonical wire data."""
+        namespace = MemoryNamespace.from_dict(_require_object(data, "namespace"))
+        raw_window = data.get("window")
+        request = cls(
+            context=MemoryRequestContext.from_dict(_require_object(data, "context")),
+            namespace=namespace,
+            action=MemoryMaintenanceAction(_require_str(data, "action")),
+            window=None
+            if raw_window is None
+            else MemoryMaintenanceWindow.from_dict(_json_object(raw_window), namespace),
+            parameters=_json_object(data.get("parameters", {})),
+        )
+        request.validate()
+        return request
+
+    def to_dict(self) -> JsonObject:
+        """Encode this request to canonical wire data."""
+        self.validate()
+        return cast(JsonObject, _to_wire(self))
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryMaintenanceResult:
+    """Provider job or immediately committed derived-memory result."""
+
+    job_id: str | None = None
+    records: tuple[MemoryRecord, ...] = ()
+    partial_errors: tuple[MemoryOperationError, ...] = ()
+
+    @classmethod
+    def from_dict(cls, data: JsonObject) -> MemoryMaintenanceResult:
+        """Decode a maintenance result from canonical wire data."""
+        return cls(
+            job_id=_optional_str(data.get("job_id")),
+            records=tuple(MemoryRecord.from_dict(_json_object(item)) for item in _list(data.get("records", []))),
+            partial_errors=tuple(
+                MemoryOperationError.from_dict(_json_object(item)) for item in _list(data.get("partial_errors", []))
+            ),
+        )
+
+    def to_dict(self) -> JsonObject:
+        """Encode this maintenance result to canonical wire data."""
+        return cast(JsonObject, _to_wire(self))
+
+
 @runtime_checkable
 class MemoryProvider(Protocol):
     """Required async contract implemented by Python memory adapters."""
@@ -760,12 +877,17 @@ __all__ = [
     "MemoryContractError",
     "MemoryErrorCode",
     "MemoryFilter",
+    "MemoryMaintenanceAction",
+    "MemoryMaintenanceRequest",
+    "MemoryMaintenanceResult",
+    "MemoryMaintenanceWindow",
     "MemoryMatch",
     "MemoryBackpressurePolicy",
     "MemoryNamespace",
     "MemoryOperationError",
     "MemoryProvenance",
     "MemoryProvider",
+    "MemoryProviderError",
     "MemoryRecord",
     "MemoryRequestContext",
     "MemorySearchRequest",

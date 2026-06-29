@@ -98,6 +98,57 @@ def test_store_request_preserves_nested_json_null_content():
     assert request.to_dict()["content"] == {"kind": "json", "value": None}
 
 
+def test_maintenance_request_round_trip_and_validation():
+    namespace = memory.MemoryNamespace("tenant", "subject", session_id="session")
+    request = memory.MemoryMaintenanceRequest(
+        context=memory.MemoryRequestContext("reflect-1"),
+        namespace=namespace,
+        action=memory.MemoryMaintenanceAction.REFLECT,
+        window=memory.MemoryMaintenanceWindow(
+            checkpoint_id="checkpoint-2",
+            previous_checkpoint_id="checkpoint-1",
+            query="Summarize durable preferences",
+            scope=memory.MemorySearchScope.SESSION,
+            filter=memory.MemoryFilter(metadata={"kind": "preference"}),
+            limit=12,
+        ),
+        parameters={"budget": "low"},
+    )
+
+    encoded = request.to_dict()
+    assert memory.MemoryMaintenanceRequest.from_dict(encoded) == request
+    assert encoded["action"] == "reflect"
+
+    invalid = memory.MemoryMaintenanceRequest(
+        context=request.context,
+        namespace=namespace,
+        action=request.action,
+        window=memory.MemoryMaintenanceWindow(
+            checkpoint_id="same",
+            previous_checkpoint_id="same",
+            query="query",
+            limit=1,
+        ),
+    )
+    with pytest.raises(memory.MemoryContractError, match="must differ"):
+        invalid.to_dict()
+
+
+def test_provider_error_retains_canonical_failure():
+    failure = memory.MemoryOperationError(
+        code=memory.MemoryErrorCode.PROVIDER_UNAVAILABLE,
+        message="provider unavailable",
+        retryable=True,
+        operation_id="search-1",
+        provider="fake",
+    )
+
+    error = memory.MemoryProviderError(failure)
+
+    assert str(error) == "provider unavailable"
+    assert error.error is failure
+
+
 async def test_runtime_checkable_provider_protocol_executes_required_methods(contract_fixture: JsonObject):
     result_data = cast(JsonObject, contract_fixture["search_result"])
     store_data = cast(JsonObject, contract_fixture["store_result"])
