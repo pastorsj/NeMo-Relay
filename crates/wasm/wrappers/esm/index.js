@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export {
+  AdaptiveRuntime,
   AnthropicMessagesCodec,
   AtifExporter,
   LlmHandle,
@@ -16,6 +17,7 @@ export {
   ScopeType,
   ToolHandle,
   activePluginReport,
+  buildCacheTelemetryEvent,
   clearLastCallbackError,
   clearPluginConfiguration,
   createScopeStack,
@@ -87,12 +89,14 @@ export {
   scopeRegisterToolSanitizeRequestGuardrail,
   scopeRegisterToolSanitizeResponseGuardrail,
   scopeStackActive,
+  setLatencySensitivity,
   setThreadScopeStack,
   toolCall,
   toolCallEnd,
   toolCallExecute,
   toolConditionalExecution,
   toolRequestIntercepts,
+  validateAdaptiveConfig,
   validatePluginConfig,
   withScope,
 } from './pkg/nemo_relay_wasm.js';

@@ -65,6 +65,19 @@ test('WebAssembly package root declaration contains the documented public types 
   }
 });
 
+test('WebAssembly ESM package root forwards native adaptive exports', () => {
+  const esmIndex = fs.readFileSync(path.resolve(testsJsDir, '..', 'wrappers', 'esm', 'index.js'), 'utf8');
+
+  for (const name of [
+    'AdaptiveRuntime',
+    'buildCacheTelemetryEvent',
+    'setLatencySensitivity',
+    'validateAdaptiveConfig',
+  ]) {
+    assert.match(esmIndex, new RegExp(String.raw`\b${name},`), `expected ESM export ${name}`);
+  }
+});
+
 test('WebAssembly JS wrapper covers TextEncoder fallback for unicode strings', () => {
   const child = spawnSync(
     process.execPath,
