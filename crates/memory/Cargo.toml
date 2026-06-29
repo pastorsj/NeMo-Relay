@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "nemo-relay-memory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Provider-neutral memory interfaces and reference implementations for NeMo Relay."
+readme = "README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = "0.1"
+nemo-relay-types.workspace = true
+tokio = { version = "1", default-features = false, features = ["sync", "time"] }
+
+[dev-dependencies]
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt", "sync", "test-util", "time"] }
