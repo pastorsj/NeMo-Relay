@@ -1,6 +1,6 @@
 ---
 title: "Memory Runtime Design and Status"
-description: "Shipped provider and automatic-memory behavior plus the staged design for queues, adapters, cache coordination, evaluation, and a demonstration."
+description: "Shipped memory, queue, maintenance, and cache-coordination behavior plus the staged design for adapters, evaluation, and a demonstration."
 position: 6
 ---
 import { MermaidStyles } from "@/components/MermaidStyles";
@@ -22,7 +22,8 @@ work. It builds on the current [Relay architecture](/about-nemo-relay/architectu
 
 ## Implementation Status
 
-The provider, automatic, and local background reference slices are implemented.
+The provider, automatic, local background, and prompt-cache coordination slices
+are implemented.
 The shipped surface includes the following pieces:
 
 - Serializable DTOs in `nemo-relay-types::memory`
@@ -44,13 +45,16 @@ The shipped surface includes the following pieces:
   in-memory provider
 - Typed Python and Node.js reference components at `nemo_relay.memory` and
   `nemo-relay-node/memory`
+- Prompt IR classification that keeps automatic memory outside the learned
+  stable cache prefix
+- Hash-only memory/cache correlation in adaptive request facts and telemetry
 
 `MemoryRuntime` still provides direct provider access only. Automatic behavior
 starts only after an application installs `MemoryComponent`,
 `InMemoryAutomaticMemory`, or the built-in `memory` plugin component. The
 following remain future work: durable/distributed queues, arbitrary Python/Node
-provider bridges, OSS adapters, prompt-cache coordination,
-attribution and evaluation, and the agent UI demonstration. Streaming managed
+provider bridges, OSS adapters, attribution and evaluation, and the agent UI
+demonstration. Streaming managed
 LLM calls reject visible lifecycle hooks instead of applying partial memory
 behavior.
 
@@ -430,15 +434,40 @@ to declared capabilities rather than changing the common execution model.
 
 ## Prompt Cache Coordination
 
-Semantic memory and prompt caching will remain separate abstractions. Memory is
-durable application state; a prompt cache avoids repeated model computation.
-They will not share a storage trait or invalidation model.
+Semantic memory and prompt caching are separate abstractions. Memory is durable
+application state; a provider prompt cache avoids repeated model computation.
+They do not share storage, an invalidation API, a retention policy, or
+exactly-once semantics. Memory owns semantic identity and provider persistence.
+ACG owns prompt-prefix observations, provider translation, and cache telemetry.
 
-Memory can use Adaptive Prompt IR for codec-aware block placement, token
-budgets, block hashes and versions, and cache diagnostics. The stable system and
-developer prefix will precede the volatile memory block when provider semantics
-allow it. Evaluations will report memory latency and quality alongside cache-read
-tokens, cache-write tokens, dynamic input tokens, and prefix-change reasons.
+The shipped seam uses Prompt IR and telemetry only. Automatic memory renders a
+bounded leading envelope. Prompt IR recognizes the exact versioned structure,
+classifies it as a private `Memory` block, and leaves the provider request
+unchanged. Stability scoring remains observable, but the planned reusable
+prefix always ends before the earliest memory block. Source-message mapping
+ignores the synthetic split so provider breakpoints still target the original
+system, tool, or user surfaces.
+
+Request diagnostics derive optional `MemoryCacheFacts` with the envelope
+version, current and previous short SHA-256 prefixes, change status, Prompt IR
+sequence index, and stable-prefix relationship. Cache telemetry copies those
+facts beside normalized cache-read and cache-write tokens and any independently
+justified first-mismatch diagnosis. It retains no raw memory, query, namespace,
+subject, tenant, or user content.
+
+A changed memory hash and a cache miss are correlated observations. They do not
+prove that memory caused the miss, caused a regression, or affected the answer.
+Strong causal claims require a controlled paired ablation. Short hashes are not
+anonymous identifiers for guessable content and still require appropriate
+telemetry access and retention policy.
+
+OpenAI currently documents exact-prefix matching and recommends placing static
+content before dynamic content in the
+[OpenAI prompt caching guide](https://platform.openai.com/docs/guides/prompt-caching).
+Anthropic documents tools, system, and messages prefix order plus separate
+cache-creation and cache-read usage in the
+[Anthropic prompt caching guide](https://platform.claude.com/docs/en/build-with-claude/prompt-caching).
+Relay keeps model-specific minimum thresholds in its capability registry.
 
 ## OSS Integration Profiles
 
@@ -497,8 +526,8 @@ Implement and validate the proposal in the following order:
    and Node.js.
 4. **Complete:** Add the supervised queue and maintainer boundary, then verify
    drain, idempotency, and worker-plugin operation.
-5. Coordinate Prompt IR placement and cache diagnostics without merging storage
-   abstractions.
+5. **Complete:** Coordinate Prompt IR placement and cache diagnostics without
+   merging storage abstractions.
 6. Add adapters in increasing complexity: Mem0, Hindsight, Graphiti, Cognee,
    and Hivemind.
 7. Add the pinned evaluation harness and publish raw per-metric results.

@@ -121,6 +121,25 @@ expose native in-memory reference components, but arbitrary language-defined
 `MemoryProvider` implementations are not yet bridged into automatic native
 execution.
 
+## Adaptive Prompt Cache Coordination
+
+Automatic memory and the Adaptive Cache Governor (ACG) share a narrow seam.
+The versioned leading memory envelope becomes a private `Memory` block in ACG
+Prompt IR, and the learned stable prefix stops before it. Provider translation
+still operates on the original request bytes.
+
+ACG can emit hash-only `MemoryCacheFacts` beside provider cache-read and
+cache-write token counts. The optional facts contain the envelope version,
+current and previous short hashes, change status, Prompt IR sequence index, and
+stable-prefix relationship. They never contain recalled text. A changed hash
+and a cache miss are correlated observations; they do not prove that memory
+caused the miss or that the model used the recalled context.
+
+The memory runtime owns tenant and subject identity, semantic records, and
+provider persistence. ACG owns prompt-prefix observations, provider cache
+placement, and cache telemetry. The two systems do not share storage,
+invalidation, retention, or exactly-once semantics.
+
 ## Background write-back
 
 Inline write-back remains the default. Set `write_delivery` to `background` to

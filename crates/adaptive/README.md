@@ -51,6 +51,31 @@ framework.
   `nemo_relay_adaptive::acg` module for PromptIR, provider plugins, stability
   analysis, and cache telemetry normalization.
 
+## Memory-Aware Cache Planning
+
+When automatic memory prepends a valid versioned Relay envelope, ACG classifies
+the envelope as a private `Memory` block in Prompt IR. It does not change the
+provider request. The learned stable prefix ends before that block, so existing
+Anthropic and OpenAI translation keeps volatile recalled context outside the
+planned reusable prefix.
+
+Cache request facts and telemetry can include `MemoryCacheFacts`: the envelope
+version, current and previous 12-hex SHA-256 prefixes, change status, Prompt IR
+sequence index, and whether the block is outside the stable prefix. These facts
+never contain recalled text. They correlate a memory revision with provider
+cache-read and cache-write tokens, but they do not prove that the revision
+caused a cache outcome or affected an answer.
+
+Memory and adaptive state remain separate. The memory runtime owns semantic
+identity and provider persistence. ACG owns prompt-prefix observations,
+provider translation, and cache telemetry. They share Prompt IR and telemetry,
+not a database, invalidation API, or retention policy.
+
+For current provider behavior, refer to the
+[OpenAI prompt caching guide](https://platform.openai.com/docs/guides/prompt-caching)
+and the
+[Anthropic prompt caching guide](https://platform.claude.com/docs/en/build-with-claude/prompt-caching).
+
 ## Installation
 
 Install the published crate alongside the core runtime:
@@ -103,4 +128,4 @@ of the adaptive pipeline.
 
 ## Documentation
 
-NeMo Relay Documentation: https://docs.nvidia.com/nemo/relay
+[NeMo Relay documentation](https://docs.nvidia.com/nemo/relay)

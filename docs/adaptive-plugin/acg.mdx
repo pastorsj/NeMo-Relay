@@ -229,6 +229,80 @@ Use `passthrough` when you want ACG observations without provider-specific hint
 translation. Set `provider` to the backend API surface the agent actually calls
 when you are ready to apply cache planning.
 
+## Memory-Aware Cache Planning
+
+Automatic memory and ACG coordinate through Prompt IR and telemetry. They do
+not share a cache or memory database. The runtime applies the following flow:
+
+1. Automatic memory renders a bounded, versioned Relay envelope at the start
+   of the triggering user content.
+2. Prompt IR classifies an exact valid envelope as a private `Memory` block and
+   retains the remaining user content as a separate `User` block. This
+   classification does not mutate the provider request.
+3. Stability analysis can score the memory block, but the reusable prefix
+   always ends before the earliest memory block.
+4. Existing provider translation applies the stable prefix to the original
+   Anthropic or OpenAI request surface.
+5. Request diagnostics create optional `MemoryCacheFacts`, and normalized
+   cache telemetry copies those facts beside provider cache token counts.
+
+`MemoryCacheFacts` contains the following privacy-bounded fields:
+
+| Field | Meaning |
+| --- | --- |
+| `version` | Automatic-memory envelope version. |
+| `hash_prefix` | Current `sha256:` prefix with 12 hexadecimal characters. |
+| `previous_hash_prefix` | Prior hash observed for the same agent and provider, when available. |
+| `changed` | Whether the current and prior hashes differ. The first observation omits this field. |
+| `sequence_index` | Position of the memory block in Prompt IR. |
+| `outside_stable_prefix` | Whether the memory block begins outside the learned stable prefix, when stability is available. |
+
+The following two-call example shows a memory revision beside normalized cache
+usage. It contains no prompt or recalled content:
+
+```json
+[
+  {
+    "cache_read_tokens": 768,
+    "cache_creation_tokens": 0,
+    "memory": {
+      "version": "0.1",
+      "hash_prefix": "sha256:112233445566",
+      "sequence_index": 2,
+      "outside_stable_prefix": true
+    }
+  },
+  {
+    "cache_read_tokens": 0,
+    "cache_creation_tokens": 1024,
+    "memory": {
+      "version": "0.1",
+      "hash_prefix": "sha256:aabbccddeeff",
+      "previous_hash_prefix": "sha256:112233445566",
+      "changed": true,
+      "sequence_index": 2,
+      "outside_stable_prefix": true
+    }
+  }
+]
+```
+
+This example is correlation, not attribution. A changed memory hash next to a
+miss or cache write does not prove that memory caused that outcome. It also
+does not prove that the answer used the recalled context. Use a controlled
+paired ablation for causal claims. Short hashes are correlation handles, not
+anonymous identifiers for guessable content, so apply appropriate telemetry
+access and retention controls.
+
+The placement follows current provider guidance. OpenAI uses exact-prefix
+matching and recommends placing static content before variable content; refer
+to the [OpenAI prompt caching guide](https://platform.openai.com/docs/guides/prompt-caching).
+Anthropic evaluates prefixes in tools, system, and messages order and exposes
+cache creation and read usage; refer to the
+[Anthropic prompt caching guide](https://platform.claude.com/docs/en/build-with-claude/prompt-caching).
+Model-specific minimums remain defined by Relay's capability registry rather
+than by documentation prose.
+
 ## Expected Output
 
 When ACG is active, instrumented LLM calls still return the same application
