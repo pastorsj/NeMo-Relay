@@ -22,7 +22,7 @@ work. It builds on the current [Relay architecture](/about-nemo-relay/architectu
 
 ## Implementation Status
 
-The provider boundary and automatic reference vertical slice are implemented.
+The provider, automatic, and local background reference slices are implemented.
 The shipped surface includes the following pieces:
 
 - Serializable DTOs in `nemo-relay-types::memory`
@@ -32,8 +32,14 @@ The shipped surface includes the following pieces:
   report
 - A generic asynchronous prepare/complete lifecycle seam for ordinary
   non-streaming managed LLM calls
-- Deterministic automatic recall, codec-aware tagged injection, synchronous
-  projected write-back, and references-only categorized evidence
+- Deterministic automatic recall, codec-aware tagged injection, inline or
+  bounded background projected write-back, and references-only categorized
+  evidence
+- A process-local bounded queue with typed retry policy, provider idempotency,
+  inspection, watermark flush, drain, and shutdown
+- A typed maintenance checkpoint/window, object-safe maintainer policy, and
+  deterministic derived-artifact implementation with parent provenance
+- An asynchronous worker-plugin shutdown callback over the existing worker RPC
 - Global, scope-local, and plugin installation backed initially by the native
   in-memory provider
 - Typed Python and Node.js reference components at `nemo_relay.memory` and
@@ -42,8 +48,8 @@ The shipped surface includes the following pieces:
 `MemoryRuntime` still provides direct provider access only. Automatic behavior
 starts only after an application installs `MemoryComponent`,
 `InMemoryAutomaticMemory`, or the built-in `memory` plugin component. The
-following remain future work: background queues and maintenance, arbitrary
-Python/Node provider bridges, OSS adapters, prompt-cache coordination,
+following remain future work: durable/distributed queues, arbitrary Python/Node
+provider bridges, OSS adapters, prompt-cache coordination,
 attribution and evaluation, and the agent UI demonstration. Streaming managed
 LLM calls reject visible lifecycle hooks instead of applying partial memory
 behavior.
@@ -120,6 +126,31 @@ let _installation = component.install_global("memory", 0)?;
 let result = llm_call_execute(params_with_openai_chat_codec).await?;
 ```
 
+To move only completed-turn storage off the response path, set
+`write_delivery`/`writeDelivery` to `background`. Recall remains synchronous so
+the current request can use it. Applications should deregister the hook and
+await queue shutdown during process handoff:
+
+```python
+component = memory.InMemoryAutomaticMemory(
+    memory.AutomaticMemoryConfig(
+        namespace=memory.MemoryNamespace("demo", "alex"),
+        write_delivery=memory.WriteDelivery.BACKGROUND,
+        background_queue=memory.MemoryWorkQueueConfig(capacity=32),
+    )
+).install()
+
+try:
+    result = await llm.execute(...)
+    await component.flush()
+finally:
+    await component.shutdown()
+```
+
+Node.js exposes the same lifecycle as `backgroundStatus`,
+`backgroundJobStatus(jobId)`, `flush()`, `drain()`, and `shutdown()`. Rust uses
+the corresponding `MemoryComponent` background methods.
+
 The Python and Node `MemoryProvider` contracts describe future adapter
 implementations. Those language-defined objects cannot yet be passed to the
 native automatic component.
@@ -177,11 +208,12 @@ Select **companion memory crate plus plugin automation**.
 
 Serializable provider-neutral DTOs live in `nemo-relay-types`.
 `nemo-relay-memory` owns the provider contract, in-memory reference
-implementation, conformance helpers, and automatic component. Later phases add
-provider factories, a bounded queue, and background lifecycle to the same crate.
+implementation, conformance helpers, automatic component, bounded queue, and
+maintainer lifecycle. Provider factories and adapters remain staged work.
 The existing plugin system validates, initializes, reports, replaces, and
-clears components; future queue drain and provider shutdown reuse that lifecycle
-instead of creating a second one.
+clears components. Direct components expose deterministic queue drain and
+shutdown. Out-of-process plugins reuse the existing authenticated worker
+shutdown RPC instead of creating a second service lifecycle.
 
 Python exposes the reference feature through `nemo_relay.memory`, and Node.js
 exposes it through `nemo-relay-node/memory` in their existing distributions.
@@ -193,7 +225,7 @@ remain optional extras or service adapters.
 | Owner | Proposed Responsibility |
 | --- | --- |
 | `nemo-relay-types` | Serializable memory DTOs, capability declarations, operation results, and event profile data shared by core, bindings, native plugins, and worker protocols. |
-| `nemo-relay-memory` | Shipped async provider contract, reference provider, automatic policy, deterministic selection, write projection, and conformance tests; future provider factories, bounded queue, and maintainers. |
+| `nemo-relay-memory` | Shipped async provider contract, reference provider and maintainer, bounded local queue, automatic policy, deterministic selection, write projection, and conformance tests; future provider factories and adapters. |
 | NeMo Relay core and plugin crates | Generic categorized mark support, plugin activation and cleanup hooks, scopes, middleware ordering, subscribers, and exporters. |
 | Python and Node.js distributions | Ergonomic `nemo_relay.memory` and `nemo-relay-node/memory` entry points without mandatory vendor dependencies. |
 | Optional adapters | Provider-specific SDK or service mappings, capability differences, and native metadata preservation. |
@@ -229,10 +261,11 @@ A returned `MemoryRecord` preserves:
 
 Provider and automation errors are typed. Retrieval defaults to a
 deadline-bounded fail-open policy after identity has been resolved: the model
-call continues without memory if the provider is unavailable. Shipped storage
-is awaited and defaults to fail open. A later bounded queue will make overflow
-and delivery failures observable. Memory processing preserves the managed
-callback's result unless an explicit fail-closed policy says otherwise.
+call continues without memory if the provider is unavailable. Storage is inline
+and fail open by default. Background mode makes admission and later delivery
+states separately observable. Fail-closed admission can fail lifecycle
+completion; a provider failure after accepted background admission cannot
+retroactively fail an already-returned callback result.
 
 ## Identity and Isolation
 
@@ -277,10 +310,11 @@ tagged injected blocks to prevent recursive memory pollution.
 The exact non-streaming order is conditional guardrails, request intercepts,
 ascending-priority lifecycle preparation, start-event sanitization/emission,
 execution intercepts and provider callback, reverse-order lifecycle completion,
-then response sanitization/end-event emission. Phase 3 awaits the provider store
-inside lifecycle completion before returning the callback result. Retrieval and
-storage have independent fail-open/fail-closed policies, and providers own any
-retry behavior.
+then response sanitization/end-event emission. Inline delivery awaits the
+provider store inside lifecycle completion. Background delivery admits the
+store to the bounded queue before returning lifecycle completion; the queue then
+applies explicit typed retries. Retrieval and storage admission have independent
+fail-open/fail-closed policies.
 
 The reference component uses these defaults:
 
@@ -295,10 +329,13 @@ The reference component uses these defaults:
 | Retrieval or injection failure | Fail open |
 | Storage failure | Fail open |
 | Write projection | Original user and normalized assistant content |
+| Write delivery | Inline |
+| Background pending capacity | 64 |
+| Background attempts | 3 |
 | Evidence capture | References only |
 
-The following diagram separates the shipped hot path from the future background
-handoff.
+The following diagram separates synchronous recall from the two shipped
+write-back delivery modes.
 
 <MermaidStyles />
 
@@ -310,17 +347,19 @@ flowchart LR
     Select --> Inject[Codec-aware tagged injection]
     Inject --> Callback[Existing managed callback pipeline]
     Callback --> Complete[Lifecycle completion]
-    Complete --> Store[Await projected provider store]
+    Complete --> Mode{Write delivery}
+    Mode -->|inline| Store[Await projected provider store]
+    Mode -->|background| Queue[Bounded queue admission]
     Store --> Result[Return callback result]
-    Complete -. future bounded handoff .-> Queue[Background queue]
-    Queue -. future .-> Async[Evaluation and maintenance]
-    Async -. derived writes .-> Store
+    Queue --> Result
+    Queue --> Async[Store or maintenance worker]
+    Async --> Store
 
     class Request purple-lightest;
     class Identity,Search,Select,Inject,Complete,Store green-light;
     class Callback green;
     class Result yellow-lightest;
-    class Queue,Async blue-lightest;
+    class Mode,Queue,Async blue-lightest;
 ```
 
 ## ATOF Evidence and Privacy
@@ -331,7 +370,9 @@ a memory-only event bypass.
 
 Shipped operations emit versioned marks with category `memory`, subtypes
 `retrieval`, `injection`, `storage`, and `failure`, and data schema
-`nemo.relay.memory.operation` version `0.1`. Marks carry status, policy,
+`nemo.relay.memory.operation` version `0.1`. Background storage marks add
+`queued`, `running`, `retrying`, `rejected`, `failed`, and `cancelled` states to
+the inline `stored` and `skipped` outcomes. Marks carry status, policy,
 provider, a hashed namespace reference, item references, ranks or scores,
 content hashes and lengths, latency where measured, and correlation IDs. The
 managed LLM call is the parent. `storage` with status `skipped` distinguishes
@@ -360,17 +401,26 @@ after exporter and binding evidence justifies it.
 
 ## Asynchronous Maintenance and Dreaming
 
-Reflection, consolidation, forgetting, summary generation, and skill learning
-will be maintenance jobs over the provider contract. A maintainer will receive
-an explicit namespace and checkpoint or event window, read and write through
-the provider, preserve derived-artifact provenance, and return a job or result
-identifier.
+Reflection and consolidation are maintenance jobs above the provider contract.
+`MemoryMaintenanceWindow` supplies an explicit namespace, checkpoint,
+predecessor, query, scope, filters, and bound. `MemoryMaintainer` owns derivation
+policy separately from provider persistence. `ReferenceMaintainer` writes one
+versioned deterministic artifact and records the checkpoint plus every parent
+memory in provenance. Provider-native reflect or improve calls and LLM-backed
+dreaming agents can implement the same policy boundary.
 
-Local maintainers will use a supervised bounded queue with retries,
-idempotency keys, flush, drain, health, and shutdown deadlines. Heavy or remote
-maintainers will use the existing native or gRPC worker-plugin boundary. The
-primary agent will read the latest committed snapshot without waiting for a
-maintenance job.
+Local maintainers use the shipped bounded queue with typed retries, idempotency
+keys, inspection, flush, drain, and shutdown deadlines. The queue is
+process-local and at-least-once; process-crash durability and distributed
+exactly-once coordination remain future work. The primary agent reads the
+latest committed snapshot without waiting for a maintenance job.
+
+Heavy or remote maintainers use the existing native or gRPC worker-plugin
+boundary. A worker owns its provider client, schedule, and queue. The host
+already sends the authenticated worker `Shutdown` RPC before process
+termination; the Rust SDK now awaits `WorkerPlugin::shutdown(reason)` so the
+plugin can close admission and drain. This is a lifecycle seam, not a new
+memory service. ATOF marks are evidence and are not a durable command bus.
 
 [Letta sleep-time compute](https://www.letta.com/blog/sleep-time-compute/) and
 [LangMem](https://github.com/langchain-ai/langmem) are design references for a
@@ -445,8 +495,8 @@ Implement and validate the proposal in the following order:
 3. **Complete:** Add deterministic automatic retrieval, tagged injection,
    write projection, operation evidence, and binding parity for Rust, Python,
    and Node.js.
-4. Add the supervised queue and maintainer boundary, then verify drain,
-   idempotency, and worker-plugin operation.
+4. **Complete:** Add the supervised queue and maintainer boundary, then verify
+   drain, idempotency, and worker-plugin operation.
 5. Coordinate Prompt IR placement and cache diagnostics without merging storage
    abstractions.
 6. Add adapters in increasing complexity: Mem0, Hindsight, Graphiti, Cognee,

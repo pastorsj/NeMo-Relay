@@ -116,8 +116,86 @@ IDs, scores, hashes, lengths, latency, and policy without raw query, memory, or
 answer text. Retrieved, injected, stored, and failed are separate facts. Relay
 does not infer that an injected item caused the answer.
 
-Automatic mode currently rejects streaming managed calls. Phase 3 awaits
-write-back before returning; bounded queues and background maintenance are
-separate work. Python and Node expose native in-memory reference components,
-but arbitrary language-defined `MemoryProvider` implementations are not yet
-bridged into automatic native execution.
+Automatic mode currently rejects streaming managed calls. Python and Node
+expose native in-memory reference components, but arbitrary language-defined
+`MemoryProvider` implementations are not yet bridged into automatic native
+execution.
+
+## Background write-back
+
+Inline write-back remains the default. Set `write_delivery` to `background` to
+admit completed-turn storage to a bounded process-local queue and return without
+waiting for the provider mutation:
+
+```rust,ignore
+use std::time::Duration;
+
+use nemo_relay_memory::{
+    AutomaticMemoryConfig, InMemoryProvider, MemoryComponent, MemoryWorkQueueConfig,
+    WriteDelivery,
+};
+
+# async fn background() -> Result<(), Box<dyn std::error::Error>> {
+let component = MemoryComponent::new(
+    InMemoryProvider::new(),
+    AutomaticMemoryConfig {
+        write_delivery: WriteDelivery::Background,
+        background_queue: MemoryWorkQueueConfig {
+            capacity: 32,
+            max_attempts: 3,
+            ..MemoryWorkQueueConfig::default()
+        },
+        ..AutomaticMemoryConfig::default()
+    },
+)?;
+let mut installation = component.install_global("memory", 0)?;
+
+// Run ordinary managed LLM calls. Recall still completes before each callback,
+// while successful-turn stores execute on the queue.
+
+component.flush_background(Duration::from_secs(5)).await?;
+installation.close()?;
+component.shutdown_background(Duration::from_secs(5)).await?;
+# Ok(())
+# }
+```
+
+The queue has one consumer and bounded pending capacity. Backpressure is either
+immediate rejection or a bounded capacity wait. Retryable typed failures retry
+with a stable job ID and provider idempotency key; every attempt receives a
+fresh deadline. `background_snapshot`, `background_job`, `flush_background`,
+`drain_background`, and `shutdown_background` make tests and process handoff
+deterministic. Python exposes the equivalent `background_status`,
+`background_job_status`, `flush`, `drain`, and `shutdown` methods. Node uses the
+same names in camel case where applicable.
+
+In background mode, `storage_policy` applies to queue admission. A fail-closed
+rejection can fail lifecycle completion. A provider failure after admission is
+recorded as job state and evidence, but cannot retroactively fail a model
+response that has already returned. Storage marks distinguish `queued`,
+`running`, `retrying`, `stored`, `rejected`, `failed`, and `cancelled` without
+including raw content or namespace identity.
+
+The local queue is at-least-once and process-local. It does not persist jobs
+across crashes or provide distributed exactly-once coordination. Terminal job
+history is bounded; provider idempotency still protects a replay after an old
+status entry is pruned.
+
+## Maintenance and dreaming
+
+`MemoryMaintainer` is separate from `MemoryProvider`: the provider owns storage
+operations, while the maintainer owns derivation policy. A
+`MemoryMaintenanceWindow` declares a checkpoint, optional predecessor, query,
+scope, filters, and a source limit. The deterministic `ReferenceMaintainer`
+searches that window and writes one versioned JSON artifact with
+`source = "maintenance"`, the checkpoint in `source_ids`, and every source
+record in `parent_memory_ids`. It is a source-preserving reference transform,
+not an LLM summary.
+
+Store and maintenance requests can use the same `MemoryWorkQueue`. A custom
+maintainer can instead call a provider-native reflect operation or a separate
+model. Heavy maintainers can run inside a `nemo-relay-worker` plugin: the worker
+owns its provider client and scheduler, and its `WorkerPlugin::shutdown` hook
+drains owned work when the host sends the existing authenticated `Shutdown`
+RPC. ATOF events remain evidence and must not be treated as a durable command
+queue.

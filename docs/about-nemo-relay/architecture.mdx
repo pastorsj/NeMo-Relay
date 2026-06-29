@@ -165,7 +165,8 @@ automatic memory:
 5. Execution intercepts wrap or replace the user callback.
 6. The user callback runs.
 7. Non-streaming LLM lifecycle completion hooks observe success or failure and
-   can finish owned work, such as configured memory write-back.
+   can finish owned work or admit it to a component-owned bounded queue, such
+   as configured memory write-back.
 8. Sanitize-response guardrails can rewrite the emitted end-event payload.
 
 Two distinctions matter:
@@ -237,15 +238,17 @@ commands. Refer to [Plugin Configuration Files](/build-plugins/plugin-configurat
 for plugin file discovery and precedence.
 
 The shipped memory surface includes a direct Rust provider API, deterministic
-in-memory reference implementation, and opt-in automatic recall/write-back for
-ordinary non-streaming managed LLM calls. Python exposes the native reference
-component from `nemo_relay.memory`; Node.js exposes it from
-`nemo-relay-node/memory`. Refer to the generated
+in-memory provider and maintainer, bounded local work queue, and opt-in
+automatic recall/write-back for ordinary non-streaming managed LLM calls.
+Write-back is inline by default and can use explicit background delivery.
+Python exposes the native reference component and async queue controls from
+`nemo_relay.memory`; Node.js exposes them from `nemo-relay-node/memory`. Refer
+to the generated
 [`nemo-relay-memory` library reference](/reference/api/rust-library-reference/nemo-relay-memory)
 for its provider, runtime, conformance, and automatic-component symbols. The
 [memory runtime design and status](/contribute/memory-runtime-design) separates
-this shipped vertical slice from future queues, adapters, cache coordination,
-evaluation, and UI work.
+the shipped local async lifecycle from future durable queues, provider adapters,
+cache coordination, evaluation, and UI work.
 
 ## Runtime Outputs
 
@@ -276,7 +279,7 @@ The following table maps repository paths to their responsibilities.
 | --- | --- |
 | `crates/core` | Scope, managed execution, middleware, events, subscribers, and runtime behavior. |
 | `crates/types` | Shared event, plugin, and cross-crate data types. |
-| `crates/memory` | Provider-neutral memory runtime, deterministic in-memory provider, conformance helpers, and opt-in automatic managed-LLM component. |
+| `crates/memory` | Provider-neutral memory runtime, deterministic provider and maintainer, bounded work queue, conformance helpers, and opt-in automatic managed-LLM component. |
 | `crates/plugin` | Plugin contracts, configuration, validation, and lifecycle. |
 | `crates/worker-proto` and `crates/worker` | Protocol definitions and runtime support for out-of-process plugin workers. |
 | `crates/adaptive` | Adaptive runtime primitives and plugin components. |
