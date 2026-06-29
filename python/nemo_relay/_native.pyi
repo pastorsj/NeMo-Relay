@@ -1246,6 +1246,10 @@ def event(
     data: _Json | None = None,
     metadata: _Json | None = None,
     timestamp: datetime | None = None,
+    llm_handle: LLMHandle | None = None,
+    category: str | None = None,
+    category_profile: _Json | None = None,
+    data_schema: _Json | None = None,
 ) -> None:
     """Emit a point-in-time mark event.
 
@@ -1253,10 +1257,16 @@ def event(
         name: Mark event name.
         handle: Optional parent scope handle. When omitted, the current
             top-of-stack scope becomes the parent.
+        llm_handle: Optional parent LLM handle. Mutually exclusive with
+            ``handle``.
         data: Optional JSON data payload recorded on the mark event.
         metadata: Optional JSON metadata payload recorded on the mark event.
         timestamp: Optional timezone-aware datetime recorded on the mark event.
             When omitted, the current runtime time is used.
+        category: Optional semantic ATOF category.
+        category_profile: Optional category-specific JSON object.
+        data_schema: Optional object containing the data schema ``name`` and
+            ``version``.
 
     Returns:
         ``None``.

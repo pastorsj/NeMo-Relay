@@ -10,6 +10,7 @@
 
 use std::sync::Arc;
 
+use nemo_relay::api::event::{CategoryProfile, DataSchema, EventCategory};
 use nemo_relay::api::llm as core_llm_api;
 use nemo_relay::api::llm::LlmAttributes;
 use nemo_relay::api::registry as core_registry_api;
@@ -289,8 +290,12 @@ fn pop_scope(
 /// Args:
 ///     name: Event name.
 ///     handle: Optional parent scope handle. Defaults to current top of stack.
+///     llm_handle: Optional parent LLM handle. Mutually exclusive with ``handle``.
 ///     data: Optional JSON-serializable application data.
 ///     metadata: Optional JSON-serializable metadata.
+///     category: Optional semantic event category.
+///     category_profile: Optional category-profile mapping.
+///     data_schema: Optional ``{"name": ..., "version": ...}`` mapping for ``data``.
 ///     timestamp: Optional timezone-aware ``datetime.datetime`` for the emitted mark event.
 ///         When omitted, the current runtime time is used.
 ///
@@ -304,25 +309,52 @@ fn pop_scope(
 	    handle: "ScopeHandle | None"=None,
 	    data: "object | None"=None,
 	    metadata: "object | None"=None,
-	    timestamp: "datetime.datetime | None"=None
-) -> "None", text_signature = "(name: str, *, handle: ScopeHandle | None = None, data: object | None = None, metadata: object | None = None, timestamp: datetime.datetime | None = None) -> None")]
+	    timestamp: "datetime.datetime | None"=None,
+	    llm_handle: "LLMHandle | None"=None,
+	    category: "str | None"=None,
+	    category_profile: "object | None"=None,
+	    data_schema: "object | None"=None
+) -> "None", text_signature = "(name: str, *, handle: ScopeHandle | None = None, data: object | None = None, metadata: object | None = None, timestamp: datetime.datetime | None = None, llm_handle: LLMHandle | None = None, category: str | None = None, category_profile: object | None = None, data_schema: object | None = None) -> None")]
+#[allow(clippy::too_many_arguments)]
 fn event(
     name: &str,
     handle: Option<PyScopeHandle>,
     data: Option<&Bound<'_, PyAny>>,
     metadata: Option<&Bound<'_, PyAny>>,
     timestamp: Option<&Bound<'_, PyAny>>,
+    llm_handle: Option<PyLLMHandle>,
+    category: Option<String>,
+    category_profile: Option<&Bound<'_, PyAny>>,
+    data_schema: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<()> {
     let data = opt_py_to_json(data)?;
     let metadata = opt_py_to_json(metadata)?;
     let timestamp = opt_py_to_timestamp(timestamp)?;
+    let category_profile = opt_py_to_json(category_profile)?
+        .map(serde_json::from_value::<CategoryProfile>)
+        .transpose()
+        .map_err(|error| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "invalid category_profile: {error}"
+            ))
+        })?;
+    let data_schema = opt_py_to_json(data_schema)?
+        .map(serde_json::from_value::<DataSchema>)
+        .transpose()
+        .map_err(|error| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("invalid data_schema: {error}"))
+        })?;
     core_scope_api::event(
         core_scope_api::EmitMarkEventParams::builder()
             .name(name)
             .parent_opt(handle.as_ref().map(|h| &h.inner))
+            .llm_parent_opt(llm_handle.as_ref().map(|h| &h.inner))
             .data_opt(data)
             .metadata_opt(metadata)
             .timestamp_opt(timestamp)
+            .category_opt(category.map(EventCategory::new))
+            .category_profile_opt(category_profile)
+            .data_schema_opt(data_schema)
             .build(),
     )
     .map_err(to_py_err)

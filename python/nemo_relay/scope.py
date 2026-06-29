@@ -22,6 +22,7 @@ from typing import Iterator
 
 from nemo_relay import Json
 from nemo_relay._native import (
+    LLMHandle,
     ScopeAttributes,
     ScopeHandle,
     ScopeType,
@@ -176,9 +177,13 @@ def event(
     name: str,
     *,
     handle: ScopeHandle | None = None,
+    llm_handle: LLMHandle | None = None,
     data: Json | None = None,
     metadata: Json | None = None,
     timestamp: datetime | None = None,
+    category: str | None = None,
+    category_profile: Json | None = None,
+    data_schema: Json | None = None,
 ) -> None:
     """Emit a ``Mark`` event under the current or provided scope.
 
@@ -186,10 +191,16 @@ def event(
         name: Event name to emit.
         handle: Optional scope handle that should own the event. When omitted,
             the current top-of-stack scope is used.
+        llm_handle: Optional LLM handle that should own the event. This is
+            mutually exclusive with ``handle``.
         data: Optional JSON payload attached to the event.
         metadata: Optional JSON metadata attached to the event.
         timestamp: Optional timezone-aware ``datetime`` recorded on the mark
             event. When omitted, the current runtime time is used.
+        category: Optional semantic ATOF category.
+        category_profile: Optional category-specific JSON object.
+        data_schema: Optional JSON object with ``name`` and ``version`` for the
+            mark's data payload.
 
     Returns:
         None: This function returns after the event has been emitted.
@@ -200,7 +211,17 @@ def event(
         timezone-aware ``datetime``; strings and naive datetimes are rejected.
     """
     _ensure_scope_stack()
-    _native_event(name, handle=handle, data=data, metadata=metadata, timestamp=timestamp)
+    _native_event(
+        name,
+        handle=handle,
+        llm_handle=llm_handle,
+        data=data,
+        metadata=metadata,
+        timestamp=timestamp,
+        category=category,
+        category_profile=category_profile,
+        data_schema=data_schema,
+    )
 
 
 @contextmanager

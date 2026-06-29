@@ -70,6 +70,47 @@ class TestScope:
         scope.event("scoped_mark", handle=handle)
         scope.pop(handle)
 
+    def test_categorized_event_with_llm_parent(self):
+        import nemo_relay
+
+        events = []
+        nemo_relay.subscribers.register("py_scope_categorized_mark", events.append)
+        try:
+            request = nemo_relay.LLMRequest({}, {"messages": []})
+            llm_handle = nemo_relay.llm.call("py-mark-parent", request)
+            scope.event(
+                "memory-retrieval",
+                llm_handle=llm_handle,
+                data={"memory_ids": ["memory-1"]},
+                category="memory",
+                category_profile={"subtype": "retrieval", "provider": "in_memory"},
+                data_schema={"name": "nemo.relay.memory.operation", "version": "0.1"},
+            )
+            nemo_relay.llm.call_end(llm_handle, {"ok": True})
+            nemo_relay.subscribers.flush()
+        finally:
+            nemo_relay.subscribers.deregister("py_scope_categorized_mark")
+
+        mark = next(event for event in events if event.name == "memory-retrieval")
+        assert mark.parent_uuid == llm_handle.uuid
+        assert mark.category == "memory"
+        assert mark.category_profile == {"subtype": "retrieval", "provider": "in_memory"}
+        assert mark.data_schema == {"name": "nemo.relay.memory.operation", "version": "0.1"}
+        assert mark.data == {"memory_ids": ["memory-1"]}
+
+    def test_event_rejects_scope_and_llm_parent(self):
+        import nemo_relay
+
+        scope_handle = scope.push("py-mark-scope-parent", ScopeType.Agent)
+        request = nemo_relay.LLMRequest({}, {"messages": []})
+        llm_handle = nemo_relay.llm.call("py-mark-llm-parent", request)
+        try:
+            with pytest.raises(RuntimeError, match="both a scope parent and an LLM parent"):
+                scope.event("invalid-mark", handle=scope_handle, llm_handle=llm_handle)
+        finally:
+            nemo_relay.llm.call_end(llm_handle, {"ok": True})
+            scope.pop(scope_handle)
+
     def test_get_handle_preserves_explicit_worker_thread_scope_stack(self):
         import threading
 

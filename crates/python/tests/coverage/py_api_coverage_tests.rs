@@ -78,6 +78,10 @@ fn py_api_helpers_and_scope_lifecycle_round_trip() {
             Some(&py_dict(py, json!({"step": 1}))),
             Some(&py_dict(py, json!({"source": "cov"}))),
             None,
+            None,
+            None,
+            None,
+            None,
         )
         .unwrap();
 
