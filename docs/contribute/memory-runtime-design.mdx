@@ -266,11 +266,13 @@ result, deduplicate stable memory IDs, preserve score order with stable-ID tie
 breaking, and then enforce item and estimated-token budgets.
 
 The call's request codec renders a versioned `<relay_memory>` block as explicitly
-untrusted context and prepends it to the triggering user content. Stable system
-and developer instructions remain ahead of that volatile block. The callback
-and LLM start event receive the same prepared request. Write projection retains
-the original user content and, by default, normalized assistant content; it
-excludes tagged injected blocks to prevent recursive memory pollution.
+untrusted context and prepends it to the triggering user content. Literal tag
+delimiters inside memory records are Unicode-escaped before budgeting and
+rendering, so a record cannot close the envelope early. Stable system and
+developer instructions remain ahead of that volatile block. The callback and
+LLM start event receive the same prepared request. Write projection retains the
+original user content and, by default, normalized assistant content; it excludes
+tagged injected blocks to prevent recursive memory pollution.
 
 The exact non-streaming order is conditional guardrails, request intercepts,
 ascending-priority lifecycle preparation, start-event sanitization/emission,

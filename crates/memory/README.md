@@ -105,8 +105,9 @@ nearest visible scope, then the component's static fallback. Tenant and subject
 are required. `metadata.memory.enabled=false` opts a call or visible scope out.
 The component searches with a deadline, deterministically deduplicates and
 budgets results, prepends a versioned untrusted block to the last user message,
-and stores the original user/assistant projection after a successful callback.
-It never writes the injected block back as new memory.
+escapes memory tag delimiters inside untrusted records, and stores the original
+user/assistant projection after a successful callback. It never writes the
+injected block back as new memory.
 
 Retrieval and storage have independent fail-open or fail-closed policies.
 Identity defaults to fail-closed. Evidence uses categorized `memory` marks with
