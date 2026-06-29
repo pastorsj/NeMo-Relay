@@ -657,11 +657,11 @@ PY
 published_cargo_packages() {
     printf '%s\n' \
         nemo-relay-types \
-        nemo-relay-memory \
         nemo-relay-plugin \
         nemo-relay-worker-proto \
         nemo-relay-worker \
         nemo-relay \
+        nemo-relay-memory \
         nemo-relay-adaptive \
         nemo-relay-pii-redaction \
         nemo-relay-ffi \
@@ -1164,6 +1164,9 @@ package-rust:
         case "$package" in
             nemo-relay-memory)
                 cargo_package_config+=(--config 'patch.crates-io.nemo-relay-types.path="crates/types"')
+                cargo_package_config+=(--config 'patch.crates-io.nemo-relay.path="crates/core"')
+                cargo_package_config+=(--config 'patch.crates-io.nemo-relay-plugin.path="crates/plugin"')
+                cargo_package_config+=(--config 'patch.crates-io.nemo-relay-worker-proto.path="crates/worker-proto"')
                 ;;
             nemo-relay)
                 cargo_package_config+=(--config 'patch.crates-io.nemo-relay-types.path="crates/types"')
