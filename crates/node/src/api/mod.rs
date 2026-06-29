@@ -60,6 +60,7 @@ use nemo_relay_adaptive::acg::{
 use nemo_relay_adaptive::context_helpers::set_latency_sensitivity as adaptive_set_latency_sensitivity;
 use nemo_relay_adaptive::plugin_component::register_adaptive_component;
 use nemo_relay_adaptive::{AdaptiveConfig, AdaptiveRuntime as CoreAdaptiveRuntime};
+use nemo_relay_memory::register_memory_component;
 use nemo_relay_pii_redaction::component::register_pii_redaction_component;
 
 use crate::callable;
@@ -79,6 +80,7 @@ fn init() {
         .expect("node adaptive plugin component registration should succeed");
     register_pii_redaction_component()
         .expect("node pii redaction plugin component registration should succeed");
+    register_memory_component().expect("node memory plugin component registration should succeed");
 }
 
 fn parse_string_map(

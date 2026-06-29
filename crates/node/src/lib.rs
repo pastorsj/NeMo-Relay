@@ -17,6 +17,7 @@
 mod api;
 mod callable;
 mod convert;
+mod memory;
 mod promise_call;
 mod stream;
 mod types;

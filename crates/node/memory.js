@@ -3,25 +3,37 @@
 
 'use strict';
 
+const { NativeInMemoryAutomaticMemory } = require('./index.js');
+
 const TO_WIRE_KEYS = Object.freeze({
   agentId: 'agent_id',
   batchStore: 'batch_store',
+  evidenceMode: 'evidence_mode',
   eventAfter: 'event_after',
   eventBefore: 'event_before',
   eventTimestamp: 'event_timestamp',
   idempotencyKey: 'idempotency_key',
+  identityPolicy: 'identity_policy',
   ingestedAfter: 'ingested_after',
   ingestedAt: 'ingested_at',
   ingestedBefore: 'ingested_before',
   jobId: 'job_id',
+  maxCandidates: 'max_candidates',
+  maxEstimatedTokens: 'max_estimated_tokens',
+  maxItems: 'max_items',
+  operationTimeoutMillis: 'operation_timeout_millis',
   operationId: 'operation_id',
   parentMemoryIds: 'parent_memory_ids',
   partialErrors: 'partial_errors',
   providerMetadata: 'provider_metadata',
+  retrievalPolicy: 'retrieval_policy',
+  searchScope: 'search_scope',
   sessionId: 'session_id',
   sourceIds: 'source_ids',
   subjectId: 'subject_id',
+  storagePolicy: 'storage_policy',
   tenantId: 'tenant_id',
+  writeProjection: 'write_projection',
 });
 
 const FROM_WIRE_KEYS = Object.freeze(
@@ -43,6 +55,51 @@ class MemoryContractError extends TypeError {
     super(message);
     this.name = 'MemoryContractError';
     this.code = 'invalid_request';
+  }
+}
+
+/**
+ * Dependency-free automatic memory for normal managed LLM calls.
+ *
+ * This reference implementation owns a native Rust in-memory provider. Node
+ * `MemoryProvider` implementations are not bridged into automatic execution
+ * yet; they remain the adapter contract for later provider work.
+ */
+class InMemoryAutomaticMemory {
+  #native;
+
+  /**
+   * Create an isolated reference component.
+   *
+   * @param {object} [config] - Camel-case automatic-memory configuration.
+   */
+  constructor(config) {
+    this.#native = new NativeInMemoryAutomaticMemory(config === undefined ? undefined : toMemoryWire(config));
+  }
+
+  /** Number of prepared calls still awaiting lifecycle completion. */
+  get activeTurns() {
+    return this.#native.activeTurns;
+  }
+
+  /**
+   * Install globally or on one active scope.
+   *
+   * @param {object} [options] - Installation name, priority, and optional scope.
+   * @returns {InMemoryAutomaticMemory} This component for fluent setup.
+   */
+  install({ name = 'automatic_memory', priority = 0, scope } = {}) {
+    this.#native.install(name, priority, scope);
+    return this;
+  }
+
+  /**
+   * Deregister this installation once.
+   *
+   * @returns {boolean} Whether an active registration was removed.
+   */
+  close() {
+    return this.#native.close();
   }
 }
 
@@ -153,6 +210,7 @@ function fromMemoryWire(value) {
 }
 
 module.exports = {
+  InMemoryAutomaticMemory,
   MemoryContractError,
   validateMemoryNamespace,
   defaultMemoryCapabilities,

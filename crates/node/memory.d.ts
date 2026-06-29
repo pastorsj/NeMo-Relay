@@ -1,7 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Json } from './index';
+import type { Json, ScopeHandle } from './index';
+
+/** Failure behavior for one automatic-memory stage. */
+export type FailurePolicy = 'fail_open' | 'fail_closed';
+
+/** Completed-turn content written by automatic memory. */
+export type WriteProjection = 'user' | 'user_and_assistant';
+
+/** Supported evidence capture mode. */
+export type EvidenceMode = 'references';
 
 /** Stable machine-readable memory operation error code. */
 export type MemoryErrorCode =
@@ -29,6 +38,39 @@ export interface MemoryNamespace {
   subjectId: string;
   sessionId?: string;
   agentId?: string;
+}
+
+/** Configuration for the native reference automatic-memory component. */
+export interface AutomaticMemoryConfig {
+  namespace?: MemoryNamespace;
+  searchScope?: MemorySearchScope;
+  maxCandidates?: number;
+  maxItems?: number;
+  maxEstimatedTokens?: number;
+  operationTimeoutMillis?: number;
+  identityPolicy?: FailurePolicy;
+  retrievalPolicy?: FailurePolicy;
+  storagePolicy?: FailurePolicy;
+  writeProjection?: WriteProjection;
+  evidenceMode?: EvidenceMode;
+}
+
+/** Installation target and ordering for automatic memory. */
+export interface AutomaticMemoryInstallOptions {
+  name?: string;
+  priority?: number;
+  scope?: ScopeHandle;
+}
+
+/** Dependency-free native reference automatic memory. */
+export declare class InMemoryAutomaticMemory {
+  constructor(config?: AutomaticMemoryConfig);
+  /** Number of prepared calls still awaiting lifecycle completion. */
+  readonly activeTurns: number;
+  /** Install globally, or only within `scope` when supplied. */
+  install(options?: AutomaticMemoryInstallOptions): this;
+  /** Deregister once and report whether a registration was removed. */
+  close(): boolean;
 }
 
 /** Namespace fields used to narrow a search. */

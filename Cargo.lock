@@ -1480,6 +1480,7 @@ dependencies = [
  "napi-derive",
  "nemo-relay",
  "nemo-relay-adaptive",
+ "nemo-relay-memory",
  "nemo-relay-pii-redaction",
  "serde",
  "serde_json",
