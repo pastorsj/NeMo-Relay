@@ -111,7 +111,7 @@ export interface MemoryStoreRequest {
 }
 
 /** Outcome classification for a store operation. */
-export type MemoryStoreDisposition = 'created' | 'updated' | 'existing';
+export type MemoryStoreDisposition = 'created' | 'existing';
 
 /** Store output from a memory provider. */
 export interface MemoryStoreResult {
