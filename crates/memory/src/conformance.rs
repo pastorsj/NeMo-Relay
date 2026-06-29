@@ -344,7 +344,11 @@ fn agreement(
         (true, Err(error)) if error.code == MemoryErrorCode::Unsupported => Err(format!(
             "{capability} is advertised but returned unsupported"
         )),
-        (true, Err(_) | Ok(())) => Ok(()),
+        (true, Err(error)) => Err(format!(
+            "{capability} is advertised but failed with {:?}",
+            error.code
+        )),
+        (true, Ok(())) => Ok(()),
     }
 }
 

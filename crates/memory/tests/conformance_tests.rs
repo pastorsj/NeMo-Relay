@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use nemo_relay_memory::memory::{
-    MemoryErrorCode, MemoryOperationError, MemorySearchRequest, MemorySearchResult,
-    MemoryStoreRequest, MemoryStoreResult,
+    MemoryCapabilities, MemoryErrorCode, MemoryOperationError, MemorySearchRequest,
+    MemorySearchResult, MemoryStoreRequest, MemoryStoreResult, MemoryUpdateRequest,
 };
 use nemo_relay_memory::{
     InMemoryProvider, MemoryProvider, MemoryProviderResult, run_provider_conformance,
@@ -74,6 +74,64 @@ async fn empty_run_id_is_a_structured_failure() {
     assert_eq!(report.cases.len(), 1);
     assert_eq!(report.cases[0].name, "valid_run_id");
     assert!(!report.cases[0].passed);
+}
+
+struct BrokenAdvertisedProvider {
+    inner: InMemoryProvider,
+}
+
+#[async_trait]
+impl MemoryProvider for BrokenAdvertisedProvider {
+    fn name(&self) -> &str {
+        "broken_advertised"
+    }
+
+    fn capabilities(&self) -> MemoryCapabilities {
+        MemoryCapabilities {
+            update: true,
+            ..MemoryCapabilities::default()
+        }
+    }
+
+    async fn search(
+        &self,
+        request: MemorySearchRequest,
+    ) -> MemoryProviderResult<MemorySearchResult> {
+        self.inner.search(request).await
+    }
+
+    async fn store(&self, request: MemoryStoreRequest) -> MemoryProviderResult<MemoryStoreResult> {
+        self.inner.store(request).await
+    }
+
+    async fn update(
+        &self,
+        _request: MemoryUpdateRequest,
+    ) -> MemoryProviderResult<MemoryStoreResult> {
+        Err(failure())
+    }
+}
+
+#[tokio::test]
+async fn advertised_capability_must_complete_successfully() {
+    let report = run_provider_conformance(
+        Arc::new(BrokenAdvertisedProvider {
+            inner: InMemoryProvider::new(),
+        }),
+        "broken-advertised-1",
+    )
+    .await;
+
+    let capability_case = report
+        .cases
+        .iter()
+        .find(|case| case.name == "capability_agreement")
+        .expect("capability case is always reported after a successful seed store");
+    assert!(!capability_case.passed);
+    assert_eq!(
+        capability_case.message.as_deref(),
+        Some("update is advertised but failed with ProviderUnavailable")
+    );
 }
 
 fn failure() -> MemoryOperationError {
