@@ -10,6 +10,7 @@ use chrono::Utc;
 use nemo_relay::api::llm::LlmRequest;
 use uuid::Uuid;
 
+use crate::acg::ir_builder::build_prompt_ir;
 use crate::acg::prompt_ir::{
     BlockContentType, PromptBlock, PromptIR, PromptRole, ProvenanceLabel, SensitivityLabel, SpanId,
 };
@@ -17,6 +18,10 @@ use crate::acg::translation::{
     AnthropicCacheTtl, AnthropicHintDirective, HintPlan, HintTarget, OpenAIHintDirective,
 };
 use crate::acg::types::SharingScope;
+use nemo_relay::codec::request::{AnnotatedLlmRequest, Message, MessageContent};
+use nemo_relay_types::memory::{
+    MEMORY_PROMPT_BLOCK_END, MEMORY_PROMPT_BLOCK_START, MEMORY_PROMPT_BLOCK_WARNING,
+};
 
 fn sample_prompt_ir() -> PromptIR {
     PromptIR {
@@ -175,4 +180,69 @@ fn anthropic_messages_apply_ttl_directive_updates_existing_cache_controls() {
         "1h"
     );
     assert_eq!(translated.content["tools"][0]["cache_control"]["ttl"], "1h");
+}
+
+#[test]
+fn anthropic_breakpoint_stays_before_volatile_memory_message() {
+    let memory_user = format!(
+        "{MEMORY_PROMPT_BLOCK_START}\n{MEMORY_PROMPT_BLOCK_WARNING}\n{{\"id\":\"m1\"}}\n{MEMORY_PROMPT_BLOCK_END}\n\nUse my preference."
+    );
+    let annotated = AnnotatedLlmRequest {
+        messages: vec![
+            Message::System {
+                content: MessageContent::Text("Stable instructions".to_string()),
+                name: None,
+            },
+            Message::User {
+                content: MessageContent::Text(memory_user.clone()),
+                name: None,
+            },
+        ],
+        model: Some("claude-sonnet-4.5".to_string()),
+        params: None,
+        tools: None,
+        tool_choice: None,
+        store: None,
+        previous_response_id: None,
+        truncation: None,
+        reasoning: None,
+        include: None,
+        user: None,
+        metadata: None,
+        service_tier: None,
+        parallel_tool_calls: None,
+        max_output_tokens: None,
+        max_tool_calls: None,
+        top_logprobs: None,
+        stream: None,
+        extra: serde_json::Map::new(),
+    };
+    let prompt_ir = build_prompt_ir(&annotated).unwrap();
+    assert_eq!(prompt_ir.blocks[1].provenance, ProvenanceLabel::Memory);
+
+    let request = LlmRequest {
+        headers: serde_json::Map::new(),
+        content: json!({
+            "model": "claude-sonnet-4.5",
+            "system": "Stable instructions",
+            "messages": [{"role": "user", "content": memory_user}]
+        }),
+    };
+    let mut plan = HintPlan::new("anthropic");
+    plan.push(AnthropicHintDirective::CacheBreakpoint {
+        target: HintTarget::stable_prefix(1, Some(SpanId("system-0".to_string()))),
+        scope: SharingScope::Session,
+    });
+
+    let translated = AnthropicMessages
+        .apply(&request, &prompt_ir, &plan)
+        .unwrap();
+
+    assert!(translated.content["system"][0]["cache_control"].is_object());
+    assert_eq!(translated.content["messages"][0]["content"], memory_user);
+    assert!(
+        translated.content["messages"][0]
+            .get("cache_control")
+            .is_none()
+    );
 }
