@@ -7,6 +7,7 @@ Vendor SDKs are imported only when their concrete adapter constructs a default
 client. Importing this package does not require any provider extra.
 """
 
+from nemo_relay.memory_providers.cognee import CogneeAsyncClient, CogneeMemoryProvider
 from nemo_relay.memory_providers.conformance import (
     ConformanceCase,
     ConformanceReport,
@@ -17,6 +18,8 @@ from nemo_relay.memory_providers.hindsight import HindsightAsyncClient, Hindsigh
 from nemo_relay.memory_providers.mem0 import Mem0AsyncClient, Mem0MemoryProvider
 
 __all__ = [
+    "CogneeAsyncClient",
+    "CogneeMemoryProvider",
     "ConformanceCase",
     "ConformanceReport",
     "GraphitiAsyncClient",

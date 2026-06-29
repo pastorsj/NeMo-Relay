@@ -5,10 +5,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any
+from uuid import UUID
 
+from nemo_relay.memory_providers.cognee import (
+    CogneeDataItem,
+    CogneeDataSnapshot,
+    CogneeRecallHit,
+    CogneeRememberSnapshot,
+)
 from nemo_relay.memory_providers.graphiti import (
     GraphitiEdgeSnapshot,
     GraphitiEpisodeEvidence,
@@ -351,6 +359,110 @@ class FakeGraphitiClient:
                 self.items[key] = replace(evidence, edges=(edge,))
                 return
         raise KeyError(episode_id)
+
+    def _maybe_fail(self) -> None:
+        if self.next_error is not None:
+            status, self.next_error = self.next_error, None
+            raise FakeVendorError(status)
+
+
+class FakeCogneeClient:
+    """Deterministic fake for Cognee's memory-oriented API."""
+
+    def __init__(self) -> None:
+        self.items: dict[tuple[str, UUID], CogneeDataItem] = {}
+        self.remember_calls: list[dict[str, object]] = []
+        self.recall_calls: list[dict[str, object]] = []
+        self.list_data_calls: list[dict[str, object]] = []
+        self.forget_calls: list[dict[str, object]] = []
+        self.improve_calls: list[dict[str, object]] = []
+        self.next_error: int | None = None
+        self.duplicate_chunks = False
+        self.remember_status = "completed"
+
+    async def remember(
+        self,
+        item: CogneeDataItem,
+        *,
+        dataset_name: str,
+        run_in_background: bool,
+        self_improvement: bool,
+    ) -> CogneeRememberSnapshot:
+        self._maybe_fail()
+        self.remember_calls.append(
+            {
+                "item": item,
+                "dataset_name": dataset_name,
+                "run_in_background": run_in_background,
+                "self_improvement": self_improvement,
+            }
+        )
+        if self.remember_status == "completed":
+            self.items[(dataset_name, item.data_id)] = item
+        return CogneeRememberSnapshot(self.remember_status, item.data_id)
+
+    async def recall(
+        self,
+        query_text: str,
+        *,
+        query_type: str,
+        datasets: list[str],
+        top_k: int,
+        auto_route: bool,
+        scope: str,
+        include_references: bool,
+    ) -> tuple[CogneeRecallHit, ...]:
+        self._maybe_fail()
+        self.recall_calls.append(
+            {
+                "query_text": query_text,
+                "query_type": query_type,
+                "datasets": list(datasets),
+                "top_k": top_k,
+                "auto_route": auto_route,
+                "scope": scope,
+                "include_references": include_references,
+            }
+        )
+        query_tokens = set(query_text.lower().split())
+        ranked: list[tuple[float, CogneeDataItem]] = []
+        for (dataset_name, _), item in self.items.items():
+            if dataset_name not in datasets:
+                continue
+            item_tokens = set(item.data.lower().split())
+            score = len(query_tokens & item_tokens) / max(1, len(query_tokens))
+            if score > 0:
+                ranked.append((score, item))
+        ranked.sort(key=lambda pair: (-pair[0], str(pair[1].data_id)))
+        output: list[CogneeRecallHit] = []
+        for score, item in ranked:
+            output.append(CogneeRecallHit(item.data_id, item.data, f"chunk-{item.data_id}-0", score))
+            if self.duplicate_chunks:
+                output.append(CogneeRecallHit(item.data_id, item.data, f"chunk-{item.data_id}-1", score / 2))
+        return tuple(output[:top_k])
+
+    async def list_data(
+        self,
+        dataset_name: str,
+        data_ids: Sequence[UUID],
+    ) -> tuple[CogneeDataSnapshot, ...]:
+        self._maybe_fail()
+        self.list_data_calls.append({"dataset_name": dataset_name, "data_ids": tuple(data_ids)})
+        return tuple(
+            CogneeDataSnapshot(data_id, item.external_metadata)
+            for (item_dataset, data_id), item in self.items.items()
+            if item_dataset == dataset_name and data_id in data_ids
+        )
+
+    async def forget(self, *, data_id: UUID, dataset: str) -> bool:
+        self._maybe_fail()
+        self.forget_calls.append({"data_id": data_id, "dataset": dataset})
+        return self.items.pop((dataset, data_id), None) is not None
+
+    async def improve(self, dataset: str, *, run_in_background: bool) -> object:
+        self._maybe_fail()
+        self.improve_calls.append({"dataset": dataset, "run_in_background": run_in_background})
+        return {"status": "completed"}
 
     def _maybe_fail(self) -> None:
         if self.next_error is not None:

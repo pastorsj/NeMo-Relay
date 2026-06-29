@@ -122,7 +122,7 @@ omit = ["python/nemo_relay/integrations/*"]
 # exists after `uv sync` / `pip install -e .`. Suppress unresolved-import for it.
 # LangChain, LangGraph, and Deep Agents are optional integration dependencies
 # which aren't installed by default.
-allowed-unresolved-imports = ["deepagents.**", "graphiti_core.**", "hindsight_client.**", "langchain.**", "langchain_*.**", "langgraph.**", "mem0.**", "nemo_relay._native", "pytest"]
+allowed-unresolved-imports = ["cognee.**", "deepagents.**", "graphiti_core.**", "hindsight_client.**", "langchain.**", "langchain_*.**", "langgraph.**", "mem0.**", "nemo_relay._native", "pytest"]
 
 [tool.ruff]
 line-length = 120

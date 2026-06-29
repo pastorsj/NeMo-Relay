@@ -266,14 +266,25 @@ def map_vendor_error(provider: str, operation_id: str, error: Exception) -> Memo
     """Map common SDK/HTTP failure facts without exposing response content."""
     status = _status_code(error)
     error_name = type(error).__name__
-    if isinstance(error, ValueError) or error_name in {"ConfigurationError", "ValidationError"}:
+    if isinstance(error, ValueError) or error_name in {
+        "CogneeValidationError",
+        "ConfigurationError",
+        "DatasetNotFoundError",
+        "ValidationError",
+    }:
         code, retryable = MemoryErrorCode.INVALID_REQUEST, False
     elif error_name == "RateLimitError":
         code, retryable = MemoryErrorCode.PROVIDER_UNAVAILABLE, True
-    elif error_name == "AuthenticationError":
+    elif error_name in {
+        "AuthenticationError",
+        "PermissionDeniedError",
+        "UnauthorizedDataAccessError",
+        "UserNotFoundError",
+    }:
         code, retryable = MemoryErrorCode.PROVIDER_UNAVAILABLE, False
     elif error_name in {
         "DatabaseError",
+        "DatabaseNotCreatedError",
         "EmbeddingError",
         "LLMError",
         "NetworkError",
