@@ -8,10 +8,11 @@ use std::sync::{Arc, RwLock};
 
 use crate::acg::canonicalize::sha256_hex;
 use crate::acg::ir_builder::build_prompt_ir;
-use crate::acg::prompt_ir::PromptIR;
-use crate::acg::{CacheRequestFacts, CapabilityRegistry};
+use crate::acg::prompt_ir::{PromptIR, ProvenanceLabel, SensitivityLabel};
+use crate::acg::{CacheRequestFacts, CapabilityRegistry, MemoryCacheFacts};
 use chrono::{DateTime, Utc};
 use nemo_relay::codec::request::AnnotatedLlmRequest;
+use nemo_relay_types::memory::MEMORY_PROMPT_VERSION;
 
 use crate::acg_profile::derive_acg_learning_key;
 use crate::types::cache::HotCache;
@@ -42,6 +43,8 @@ pub struct CacheDiagnosticsTracker {
     pub last_seen_by_prefix: HashMap<StablePrefixKey, DateTime<Utc>>,
     /// Last retained stable prefix exemplar for an agent/provider pair.
     pub last_exemplar_by_agent: HashMap<AgentProviderKey, StablePrefixExemplar>,
+    /// Last automatic-memory hash observed for an agent/provider pair.
+    pub last_memory_hash_by_agent: HashMap<AgentProviderKey, String>,
 }
 
 /// Builds canonical request facts for cache miss diagnosis from the live runtime state.
@@ -86,11 +89,19 @@ fn build_cache_request_facts_from_prompt_ir(
         now,
     } = input;
 
+    let agent_provider_key = (agent_id.to_string(), provider.to_string());
+
     let Some(stability) = hot_cache
         .acg_profiles
         .get(profile_key)
         .or(hot_cache.acg_stability.as_ref())
     else {
+        let memory = build_memory_cache_facts(
+            prompt_ir,
+            None,
+            &agent_provider_key,
+            &mut tracker.last_memory_hash_by_agent,
+        );
         return CacheRequestFacts {
             provider: provider.to_string(),
             stable_prefix_length: 0,
@@ -102,6 +113,7 @@ fn build_cache_request_facts_from_prompt_ir(
             actual_hash_prefix: None,
             retention_window_secs: None,
             observed_gap_secs: None,
+            memory,
             missing_facts: vec!["acg_stability_unavailable".to_string()],
         };
     };
@@ -156,7 +168,12 @@ fn build_cache_request_facts_from_prompt_ir(
             ))
         };
 
-    let agent_provider_key = (agent_id.to_string(), provider.to_string());
+    let memory = build_memory_cache_facts(
+        prompt_ir,
+        Some(stable_prefix_length),
+        &agent_provider_key,
+        &mut tracker.last_memory_hash_by_agent,
+    );
     let first_mismatch = tracker
         .last_exemplar_by_agent
         .get(&agent_provider_key)
@@ -229,8 +246,38 @@ fn build_cache_request_facts_from_prompt_ir(
         actual_hash_prefix,
         retention_window_secs,
         observed_gap_secs,
+        memory,
         missing_facts,
     }
+}
+
+fn build_memory_cache_facts(
+    prompt_ir: &PromptIR,
+    stable_prefix_length: Option<usize>,
+    agent_provider_key: &AgentProviderKey,
+    last_memory_hash_by_agent: &mut HashMap<AgentProviderKey, String>,
+) -> Option<MemoryCacheFacts> {
+    let block = prompt_ir.blocks.iter().find(|block| {
+        block.provenance == ProvenanceLabel::Memory
+            && block.sensitivity == SensitivityLabel::Private
+    })?;
+    let hash_prefix = short_hash_prefix(&block.content);
+    let previous_hash_prefix = last_memory_hash_by_agent.get(agent_provider_key).cloned();
+    let changed = previous_hash_prefix
+        .as_ref()
+        .map(|previous| previous != &hash_prefix);
+
+    last_memory_hash_by_agent.insert(agent_provider_key.clone(), hash_prefix.clone());
+
+    Some(MemoryCacheFacts {
+        version: MEMORY_PROMPT_VERSION.to_string(),
+        hash_prefix,
+        previous_hash_prefix,
+        changed,
+        sequence_index: block.sequence_index,
+        outside_stable_prefix: stable_prefix_length
+            .map(|length| block.sequence_index as usize >= length),
+    })
 }
 
 fn resolve_anthropic_min_tokens(model: Option<&str>) -> u32 {

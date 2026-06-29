@@ -30,6 +30,7 @@ fn sample_telemetry_event() -> CacheTelemetryEvent {
         hit_rate: 0.8,
         miss_reason: None,
         miss_diagnosis: None,
+        memory: None,
         provider: "anthropic".to_string(),
         timestamp: Utc::now(),
     }
@@ -46,6 +47,7 @@ fn sample_timestamp() -> DateTime<Utc> {
 #[test]
 fn test_telemetry_types_are_send_sync() {
     assert_send_sync::<CacheRequestFacts>();
+    assert_send_sync::<MemoryCacheFacts>();
     assert_send_sync::<CacheMissDiagnosis>();
     assert_send_sync::<CacheMissEvidence>();
     assert_send_sync::<CacheTelemetryEvent>();
@@ -155,9 +157,66 @@ fn test_cache_telemetry_event_serde_without_miss_reason() {
     let json = serde_json::to_string(&event).unwrap();
     assert!(!json.contains("miss_reason"));
     assert!(!json.contains("miss_diagnosis"));
+    assert!(!json.contains("\"memory\""));
 
     let restored: CacheTelemetryEvent = serde_json::from_str(&json).unwrap();
     assert_eq!(restored, event);
+}
+
+#[test]
+fn test_from_usage_copies_memory_facts_for_hits_and_misses_without_causal_claims() {
+    let memory = MemoryCacheFacts {
+        version: "0.1".to_string(),
+        hash_prefix: "sha256:aabbccddeeff".to_string(),
+        previous_hash_prefix: Some("sha256:112233445566".to_string()),
+        changed: Some(true),
+        sequence_index: 2,
+        outside_stable_prefix: Some(true),
+    };
+    let request_facts = CacheRequestFacts {
+        provider: "openai".to_string(),
+        stable_prefix_length: 2,
+        stable_prefix_tokens: Some(1536),
+        required_min_tokens: Some(1024),
+        first_mismatch_span_id: Some("stable-span-1".to_string()),
+        first_mismatch_sequence_index: Some(1),
+        expected_hash_prefix: Some("sha256:abcdefabcdef".to_string()),
+        actual_hash_prefix: Some("sha256:fedcbafedcba".to_string()),
+        retention_window_secs: None,
+        observed_gap_secs: None,
+        memory: Some(memory.clone()),
+        missing_facts: vec![],
+    };
+
+    for cache_read_tokens in [512, 0] {
+        let event = CacheTelemetryEvent::from_usage(
+            Uuid::nil(),
+            sample_agent_identity(),
+            CacheTelemetryProvider::OpenAI,
+            &Usage {
+                prompt_tokens: Some(1536),
+                completion_tokens: None,
+                total_tokens: None,
+                cache_read_tokens: Some(cache_read_tokens),
+                cache_write_tokens: Some(0),
+                cost: None,
+            },
+            sample_timestamp(),
+            Some(&request_facts),
+        )
+        .expect("usage should produce telemetry");
+
+        assert_eq!(event.memory, Some(memory.clone()));
+        if cache_read_tokens == 0 {
+            assert_eq!(event.miss_reason, Some(CacheMissReason::PrefixMismatch));
+            assert!(event.miss_diagnosis.is_some());
+        } else {
+            assert_eq!(event.miss_reason, None);
+            assert_eq!(event.miss_diagnosis, None);
+        }
+        let json = serde_json::to_string(&event).expect("event should serialize");
+        assert!(!json.contains("memory text"));
+    }
 }
 
 #[test]
@@ -359,6 +418,7 @@ fn test_from_usage_uses_prefix_mismatch_diagnosis_when_request_facts_are_availab
         actual_hash_prefix: Some("sha256:fedcba0987654321".to_string()),
         retention_window_secs: None,
         observed_gap_secs: None,
+        memory: None,
         missing_facts: vec![],
     };
 
@@ -402,6 +462,7 @@ fn test_cache_miss_diagnosis_prefix_mismatch_is_bounded_and_serialized() {
         actual_hash_prefix: Some("sha256:aabbccddeeff".to_string()),
         retention_window_secs: None,
         observed_gap_secs: None,
+        memory: None,
         missing_facts: vec![],
     };
 
@@ -470,6 +531,7 @@ fn test_cache_miss_diagnosis_below_minimum_threshold_reports_exact_token_counts(
         actual_hash_prefix: None,
         retention_window_secs: None,
         observed_gap_secs: None,
+        memory: None,
         missing_facts: vec![],
     };
 
@@ -525,6 +587,7 @@ fn test_cache_miss_diagnosis_retention_expired_reports_gap_and_window() {
         actual_hash_prefix: None,
         retention_window_secs: Some(300.0),
         observed_gap_secs: Some(480.0),
+        memory: None,
         missing_facts: vec![],
     };
 
@@ -578,6 +641,7 @@ fn test_cache_miss_diagnosis_unknown_preserves_missing_facts() {
         actual_hash_prefix: None,
         retention_window_secs: None,
         observed_gap_secs: None,
+        memory: None,
         missing_facts: vec![
             "stable_prefix_tokens_unavailable".to_string(),
             "expected_hash_prefix_unavailable".to_string(),
@@ -634,6 +698,7 @@ fn test_no_write_anthropic_cache_miss_diagnosis_uses_threshold_facts_without_loc
         actual_hash_prefix: None,
         retention_window_secs: Some(300.0),
         observed_gap_secs: None,
+        memory: None,
         missing_facts: vec![],
     };
 
@@ -675,6 +740,7 @@ fn test_anthropic_multi_breakpoint_telemetry_event_uses_normalized_usage_totals(
         actual_hash_prefix: None,
         retention_window_secs: Some(300.0),
         observed_gap_secs: None,
+        memory: None,
         missing_facts: vec![],
     };
 

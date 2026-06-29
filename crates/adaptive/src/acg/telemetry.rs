@@ -20,6 +20,29 @@ use super::types::AgentIdentity;
 // Cache miss diagnosis contract
 // ===================================================================
 
+/// Hash-only facts that correlate the automatic memory block with cache behavior.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryCacheFacts {
+    /// Version of the automatic memory prompt envelope.
+    pub version: String,
+    /// Short SHA-256 hash prefix for the current memory block.
+    pub hash_prefix: String,
+    /// Hash prefix observed on the prior request for this agent and provider.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub previous_hash_prefix: Option<String>,
+    /// Whether the current hash differs from the prior observed hash.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub changed: Option<bool>,
+    /// Prompt IR sequence index occupied by the memory block.
+    pub sequence_index: u32,
+    /// Whether the memory block begins outside the observed stable prefix.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub outside_stable_prefix: Option<bool>,
+}
+
 /// Request-time facts used to classify a cache miss without leaking prompt text.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CacheRequestFacts {
@@ -59,6 +82,10 @@ pub struct CacheRequestFacts {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub observed_gap_secs: Option<f64>,
+    /// Hash-only automatic-memory facts, when a memory block is present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub memory: Option<MemoryCacheFacts>,
     /// Facts that were unavailable when the runtime attempted diagnosis.
     #[serde(default)]
     pub missing_facts: Vec<String>,
@@ -219,6 +246,10 @@ pub struct CacheTelemetryEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub miss_diagnosis: Option<CacheMissDiagnosis>,
+    /// Hash-only automatic-memory facts copied from the request diagnostics.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub memory: Option<MemoryCacheFacts>,
     /// Provider name (e.g., "anthropic", "openai").
     pub provider: String,
     /// When this telemetry was recorded.
@@ -279,6 +310,7 @@ impl CacheTelemetryEvent {
             hit_rate: Self::compute_hit_rate(cache_read_tokens, total_prompt_tokens),
             miss_reason,
             miss_diagnosis,
+            memory: request_facts.and_then(|facts| facts.memory.clone()),
             provider: provider.as_str().to_string(),
             timestamp,
         })

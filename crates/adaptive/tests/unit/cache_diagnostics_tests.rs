@@ -88,6 +88,17 @@ fn make_hot_cache(stable_prefix_length: Option<usize>) -> HotCache {
     }
 }
 
+fn make_memory_prompt_ir(memory: &str) -> PromptIR {
+    let mut prompt_ir = make_prompt_ir(vec![
+        ("system-0", "You are a careful planner", Some(700)),
+        ("memory-1", memory, Some(200)),
+        ("user-2", "Summarize the latest findings", Some(500)),
+    ]);
+    prompt_ir.blocks[1].provenance = ProvenanceLabel::Memory;
+    prompt_ir.blocks[1].sensitivity = SensitivityLabel::Private;
+    prompt_ir
+}
+
 fn sample_request(model: Option<&str>) -> AnnotatedLlmRequest {
     AnnotatedLlmRequest {
         messages: vec![
@@ -335,4 +346,98 @@ fn cache_request_facts_below_minimum_no_write_uses_prefix_matched_anthropic_thre
         "planner-driven no-write diagnosis must use the canonical prefix-matched Anthropic threshold",
     );
     assert_eq!(facts.retention_window_secs, Some(300.0));
+}
+
+#[test]
+fn cache_request_facts_tracks_hash_only_memory_revisions_and_stability_boundary() {
+    let mut tracker = CacheDiagnosticsTracker::default();
+    let first_prompt = make_memory_prompt_ir("User prefers concise summaries");
+
+    let first = build_cache_request_facts_from_prompt_ir(
+        CacheFactsBuildInput {
+            agent_id: "agent-1",
+            provider: "openai",
+            model: Some("gpt-4o"),
+            prompt_ir: &first_prompt,
+            hot_cache: &make_hot_cache(None),
+            profile_key: "test-profile",
+            now: sample_timestamp(),
+        },
+        &mut tracker,
+    );
+    let first_memory = first.memory.expect("memory facts should be present");
+    assert_eq!(first_memory.version, "0.1");
+    assert_eq!(
+        first_memory.hash_prefix,
+        short_hash_prefix("User prefers concise summaries")
+    );
+    assert_eq!(first_memory.previous_hash_prefix, None);
+    assert_eq!(first_memory.changed, None);
+    assert_eq!(first_memory.sequence_index, 1);
+    assert_eq!(first_memory.outside_stable_prefix, None);
+
+    let unchanged = build_cache_request_facts_from_prompt_ir(
+        CacheFactsBuildInput {
+            agent_id: "agent-1",
+            provider: "openai",
+            model: Some("gpt-4o"),
+            prompt_ir: &first_prompt,
+            hot_cache: &make_hot_cache(Some(1)),
+            profile_key: "test-profile",
+            now: sample_timestamp() + Duration::seconds(1),
+        },
+        &mut tracker,
+    );
+    let unchanged_memory = unchanged.memory.expect("memory facts should be present");
+    assert_eq!(
+        unchanged_memory.previous_hash_prefix,
+        Some(short_hash_prefix("User prefers concise summaries"))
+    );
+    assert_eq!(unchanged_memory.changed, Some(false));
+    assert_eq!(unchanged_memory.outside_stable_prefix, Some(true));
+
+    let changed_prompt = make_memory_prompt_ir("User prefers detailed summaries");
+    let changed = build_cache_request_facts_from_prompt_ir(
+        CacheFactsBuildInput {
+            agent_id: "agent-1",
+            provider: "openai",
+            model: Some("gpt-4o"),
+            prompt_ir: &changed_prompt,
+            hot_cache: &make_hot_cache(Some(2)),
+            profile_key: "test-profile",
+            now: sample_timestamp() + Duration::seconds(2),
+        },
+        &mut tracker,
+    );
+    let changed_memory = changed.memory.expect("memory facts should be present");
+    assert_eq!(changed_memory.changed, Some(true));
+    assert_eq!(changed_memory.outside_stable_prefix, Some(false));
+
+    let json = serde_json::to_string(&changed_memory).expect("memory facts should serialize");
+    assert!(json.contains("sha256:"));
+    assert!(!json.contains("detailed summaries"));
+}
+
+#[test]
+fn cache_request_facts_omit_memory_when_prompt_ir_has_no_private_memory_block() {
+    let prompt_ir = make_prompt_ir(vec![
+        ("system-0", "You are a careful planner", Some(700)),
+        ("user-1", "Summarize the latest findings", Some(500)),
+    ]);
+    let facts = build_cache_request_facts_from_prompt_ir(
+        CacheFactsBuildInput {
+            agent_id: "agent-1",
+            provider: "openai",
+            model: Some("gpt-4o"),
+            prompt_ir: &prompt_ir,
+            hot_cache: &make_hot_cache(Some(1)),
+            profile_key: "test-profile",
+            now: sample_timestamp(),
+        },
+        &mut CacheDiagnosticsTracker::default(),
+    );
+
+    assert_eq!(facts.memory, None);
+    let json = serde_json::to_string(&facts).expect("request facts should serialize");
+    assert!(!json.contains("\"memory\""));
 }
