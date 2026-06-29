@@ -125,6 +125,24 @@ uv add "nemo-relay[langgraph,langchain-nvidia]"
 pip install "nemo-relay[langgraph,langchain-nvidia]"
 ```
 
+#### Memory Providers
+
+Mem0 OSS and Hindsight direct memory providers are separate optional extras:
+
+```bash
+uv add "nemo-relay[mem0]"
+uv add "nemo-relay[hindsight]"
+
+# Or with pip
+pip install "nemo-relay[mem0]"
+pip install "nemo-relay[hindsight]"
+```
+
+These adapters implement asynchronous search/store and supported conformance in
+`nemo_relay.memory_providers`. They are not yet bridged into the native
+automatic-memory hook. Importing the base package does not import either vendor
+SDK.
+
 ## Getting Started
 
 Register a subscriber, create a scope, and emit a mark event:
@@ -187,6 +205,8 @@ The public package modules are:
 - `nemo_relay.observability`
 - `nemo_relay.typed`
 - `nemo_relay.codecs`
+- `nemo_relay.memory`
+- `nemo_relay.memory_providers`
 
 ### Integrations
 

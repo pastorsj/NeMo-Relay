@@ -1,0 +1,179 @@
+---
+title: "Memory Providers"
+description: "Install and use the optional Mem0 OSS and Hindsight memory provider adapters."
+position: 2
+---
+{/* SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0 */}
+
+NeMo Relay provides optional Python adapters for Mem0 OSS and Hindsight. Vendor
+SDKs are not part of the default `nemo-relay` installation and do not enter the
+Rust core dependency graph.
+
+## Support Matrix
+
+| Profile | Tested contract | Required operations | Optional Relay capabilities | Automatic hook |
+| --- | --- | --- | --- | --- |
+| Mem0 OSS | `mem0ai>=2.0.10,<3.0.0` | Search, store | None | No; direct Python provider |
+| Hindsight | `hindsight-client>=0.8.3,<0.9.0` | Search, store | Reflect maintenance | No; direct Python provider |
+
+Both profiles run the same deterministic supported-conformance suite for
+store/search, record preservation, tenant and subject isolation, cross-session
+subject recall, stable ordering, process-local idempotent replay and conflict,
+metadata/time filters, typed invalid requests, and capability agreement.
+
+The version ranges identify the SDK contracts reviewed by Relay. They are not
+a claim that every vector store, embedding model, LLM, or Hindsight server
+configuration behaves identically.
+
+## Install a Provider Extra
+
+<Tabs>
+<Tab title="Mem0 with uv">
+```bash
+uv add "nemo-relay[mem0]"
+```
+</Tab>
+<Tab title="Mem0 with pip">
+```bash
+pip install "nemo-relay[mem0]"
+```
+</Tab>
+<Tab title="Hindsight with uv">
+```bash
+uv add "nemo-relay[hindsight]"
+```
+</Tab>
+<Tab title="Hindsight with pip">
+```bash
+pip install "nemo-relay[hindsight]"
+```
+</Tab>
+</Tabs>
+
+Importing `nemo_relay` or `nemo_relay.memory_providers` does not import either
+vendor SDK. The adapter imports an SDK only when it needs to construct a default
+client. Applications can inject an already configured async client instead.
+
+## Mem0 OSS
+
+The Mem0 profile uses the official `AsyncMemory` API documented in
+[Async Memory](https://docs.mem0.ai/open-source/features/async-memory). It
+constructs a client from a Mem0 configuration mapping or accepts an injected
+client.
+
+```python
+from nemo_relay.memory_providers import Mem0MemoryProvider
+
+provider = Mem0MemoryProvider(config={
+    "vector_store": {...},
+    "embedder": {...},
+    "llm": {...},
+})
+```
+
+The adapter maps Relay behavior as follows:
+
+- A SHA-256-derived opaque Mem0 `user_id` includes both Relay tenant and
+  subject. Mem0 search receives that ID inside `filters`, as required by the
+  current OSS API.
+- Agent and session scopes become reserved hashed metadata filters. Supported
+  scalar exact metadata filters are also pushed down. The adapter reapplies all
+  Relay scope, metadata, and time predicates after search. A bounded over-fetch
+  means a heavily filtered request can return fewer than its requested limit.
+- Store always uses `infer=False`. One Relay store therefore creates one raw
+  Mem0 ADD and does not ask Mem0's extraction LLM to update or delete memories.
+- A reserved metadata envelope preserves the original Relay namespace,
+  content, timestamps, provenance, and metadata. Mem0's ID remains in
+  `provider_metadata.vendor_id`.
+- Update, delete, batch store, maintenance, feedback, and explicit health are
+  not advertised in this profile, even when Mem0 exposes an operation with a
+  similar name.
+
+See the official
+[OSS migration guide](https://docs.mem0.ai/platform/features/graph-memory) for
+the Mem0 2.x identity/filter rules and algorithm changes.
+
+## Hindsight
+
+The Hindsight profile uses the async `aretain`, `arecall`, and `areflect`
+methods from the official
+[Python client](https://github.com/vectorize-io/hindsight/tree/main/hindsight-clients/python).
+
+```python
+from nemo_relay.memory_providers import HindsightMemoryProvider
+
+provider = HindsightMemoryProvider(
+    base_url="http://localhost:8888",
+    api_key=None,
+)
+```
+
+You can also inject a configured `Hindsight` client. The adapter maps Relay
+behavior as follows:
+
+- One opaque Hindsight bank represents a Relay tenant and subject. Reserved
+  hashed tags narrow agent and session scopes with strict tag matching.
+- Store calls `aretain(..., retain_async=False)` and reports success only after
+  Hindsight finishes the request. A deterministic document ID provides a
+  stable retry aid.
+- Recall reconstructs the original Relay record from reserved metadata even
+  when Hindsight returns extracted fact text. Arbitrary metadata and time
+  filters are enforced locally after recall. Multiple extracted facts for the
+  same Relay document are de-duplicated by Relay record ID.
+- Reflect is the only advertised maintenance action. The adapter calls
+  `areflect(include_facts=True)`, maps exact returned fact IDs back to Relay
+  records when recall metadata permits, retains the reflection as a derived
+  memory, and records all provider fact IDs as provenance source references.
+- Hindsight Reflect accepts a query, scope, limit for evidence mapping, and
+  optional checkpoint through maintenance parameters. It rejects a Relay
+  maintenance window because Hindsight cannot enforce that window's arbitrary
+  metadata, time, and record-count boundary during native reflection.
+- Consolidate, document CRUD, bank management, feedback, and health are not
+  advertised as equivalent Relay capabilities.
+
+See [Recall](https://docs.hindsight.vectorize.io/recall/) and
+[Reflect](https://docs.hindsight.vectorize.io/reflect/) for provider-native
+ranking and reflection behavior.
+
+## Idempotency, Cancellation, and Errors
+
+Each adapter keeps a bounded, process-local idempotency ledger. Reusing the same
+key and payload on the same adapter instance returns `existing`; reusing the key
+with a different payload raises `conflict`. Hindsight document IDs and Relay
+metadata improve retry stability, but neither profile claims distributed
+exactly-once mutation across processes.
+
+The adapters use native async SDK methods, enforce Relay request deadlines, and
+propagate task cancellation. A remote service might commit a request before a
+client observes cancellation, so callers should retry stores with the same
+idempotency key. Provider validation, conflict, timeout, availability, and
+unknown failures become `MemoryProviderError` values with canonical error
+codes. Error details contain safe type/status facts, not credentials, memory
+content, or response bodies.
+
+## Optional Live Checks
+
+The default test suite uses deterministic fakes and no services. Maintainers can
+run live checks explicitly:
+
+```bash
+NEMO_RELAY_RUN_MEM0_LIVE=1 \
+NEMO_RELAY_MEM0_LIVE_CONFIG=/path/to/mem0.json \
+uv run pytest python/tests/memory_providers/test_mem0_live.py
+
+NEMO_RELAY_HINDSIGHT_URL=http://localhost:8888 \
+uv run pytest python/tests/memory_providers/test_hindsight_live.py
+```
+
+Set `NEMO_RELAY_HINDSIGHT_API_KEY` when the Hindsight service requires it. Live
+tests use unique namespaces but do not delete provider data because delete is
+outside the supported Relay profiles.
+
+## Trust Boundary
+
+The reserved record envelope is integrity-sensitive provider metadata, not a
+cryptographic signature. Use a Relay-owned Mem0 collection or Hindsight bank
+and prevent untrusted clients from writing reserved `_nemo_relay_` metadata
+keys. A client with direct write access to the same provider partition can
+forge or replace provider metadata regardless of Relay's API validation.

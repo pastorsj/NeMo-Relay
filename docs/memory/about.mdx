@@ -1,0 +1,70 @@
+---
+title: "Memory"
+sidebar-title: "About"
+description: "Use provider-neutral long-term memory contracts and automatic reference memory in NeMo Relay."
+position: 1
+---
+{/* SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0 */}
+
+NeMo Relay memory separates two ways of using memory:
+
+- **Automatic reference memory** installs a native in-memory component around
+  ordinary managed LLM calls. It retrieves, injects, and writes memory without
+  adding memory tools to the agent's reasoning loop.
+- **Direct provider adapters** implement the asynchronous Python
+  `MemoryProvider` contract for explicit search, store, conformance, and
+  maintenance workflows. Mem0 OSS and Hindsight are the first adapters.
+
+The provider contract always partitions data by `tenant_id` and `subject_id`.
+Optional session and agent identity can narrow a search, but cannot broaden it.
+Records retain original content, event and ingestion timestamps, provenance,
+metadata, and stable Relay identity across providers.
+
+## Automatic Reference Mode
+
+Install the zero-service component once, then call the normal managed LLM API.
+The agent does not call search or store.
+
+```python
+from nemo_relay import memory
+
+component = memory.InMemoryAutomaticMemory(
+    memory.AutomaticMemoryConfig(
+        namespace=memory.MemoryNamespace("demo", "alex"),
+    )
+).install()
+
+try:
+    # Use nemo_relay.llm.execute(...) as usual.
+    ...
+finally:
+    await component.shutdown()
+```
+
+The automatic component emits separate references-only evidence for retrieved,
+injected, written, and maintenance facts. It does not expose raw memory content
+in evidence by default, and it does not claim that retrieval caused an answer
+unless a later citation or evaluator establishes that relationship.
+
+## Direct Provider Mode
+
+Use direct adapters when an application or worker owns provider calls.
+
+```python
+from nemo_relay.memory_providers import Mem0MemoryProvider
+
+provider = Mem0MemoryProvider(config={...})
+result = await provider.search(search_request)
+```
+
+Direct Python providers cannot currently be passed to
+`InMemoryAutomaticMemory`. That component owns a native Rust reference
+provider. A future bridge can connect the same Python contract to automatic
+execution without changing adapter semantics.
+
+See [Memory Providers](/memory/providers) for installation, mappings, exact
+capabilities, conformance, and current limitations. See
+[Memory Runtime Design and Status](/contribute/memory-runtime-design) for the
+runtime architecture, lifecycle evidence, background queue, maintenance
+interface, and prompt-cache boundary.

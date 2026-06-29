@@ -30,6 +30,10 @@ navigation:
     title: "Adaptive Plugin"
     slug: adaptive-plugin
     title-source: frontmatter
+  - folder: ./memory
+    title: "Memory"
+    slug: memory
+    title-source: frontmatter
   - folder: ./nemo-guardrails-plugin
     title: "NeMo Guardrails Plugin"
     slug: nemo-guardrails-plugin
