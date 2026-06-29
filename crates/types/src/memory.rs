@@ -576,6 +576,59 @@ pub enum MemoryMaintenanceAction {
     Consolidate,
 }
 
+/// Bounded source view consumed by one maintenance operation.
+///
+/// A checkpoint identifies the caller's logical source snapshot. Providers and
+/// maintainers may use the query and filters to load that snapshot, but must not
+/// broaden the request's tenant and subject partition.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct MemoryMaintenanceWindow {
+    /// Stable identifier for this logical source snapshot.
+    pub checkpoint_id: String,
+    /// Optional checkpoint from which this window advances.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_checkpoint_id: Option<String>,
+    /// Natural-language or provider-interpreted source query.
+    pub query: String,
+    /// Namespace fields that narrow the subject partition.
+    #[serde(default)]
+    pub scope: MemorySearchScope,
+    /// Provider-neutral exact and temporal source filters.
+    #[serde(default)]
+    pub filter: MemoryFilter,
+    /// Maximum number of source records in the window.
+    pub limit: usize,
+}
+
+impl MemoryMaintenanceWindow {
+    /// Validate checkpoint identity and bounded source selection.
+    pub fn validate(&self, namespace: &MemoryNamespace) -> Result<(), MemoryOperationError> {
+        validate_identifier("checkpoint_id", &self.checkpoint_id)?;
+        validate_optional_identifier(
+            "previous_checkpoint_id",
+            self.previous_checkpoint_id.as_deref(),
+        )?;
+        if self.previous_checkpoint_id.as_deref() == Some(self.checkpoint_id.as_str()) {
+            return Err(MemoryOperationError::invalid_request(
+                "previous_checkpoint_id must differ from checkpoint_id",
+            ));
+        }
+        self.scope.validate(namespace)?;
+        if self.query.trim().is_empty() {
+            return Err(MemoryOperationError::invalid_request(
+                "maintenance window query must not be empty",
+            ));
+        }
+        if !(1..=MAX_SEARCH_LIMIT).contains(&self.limit) {
+            return Err(MemoryOperationError::invalid_request(format!(
+                "maintenance window limit must be in 1..={MAX_SEARCH_LIMIT}",
+            )));
+        }
+        self.filter.validate()
+    }
+}
+
 /// Maintenance request for providers that advertise maintenance capability.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -586,9 +639,24 @@ pub struct MemoryMaintenanceRequest {
     pub namespace: MemoryNamespace,
     /// Requested maintenance action.
     pub action: MemoryMaintenanceAction,
+    /// Optional bounded source snapshot for derivation-oriented maintenance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<MemoryMaintenanceWindow>,
     /// Provider-neutral maintenance parameters.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub parameters: BTreeMap<String, Json>,
+}
+
+impl MemoryMaintenanceRequest {
+    /// Validate operation context, namespace, and optional source window.
+    pub fn validate(&self) -> Result<(), MemoryOperationError> {
+        self.context.validate()?;
+        self.namespace.validate()?;
+        if let Some(window) = &self.window {
+            window.validate(&self.namespace)?;
+        }
+        Ok(())
+    }
 }
 
 /// Maintenance job or immediate derived-record result.

@@ -6,8 +6,9 @@
 use chrono::{TimeZone, Utc};
 use nemo_relay_types::memory::{
     MAX_SEARCH_LIMIT, MemoryCapabilities, MemoryContent, MemoryErrorCode, MemoryFilter,
-    MemoryNamespace, MemoryOperationError, MemoryProvenance, MemoryRequestContext,
-    MemorySearchRequest, MemorySearchResult, MemorySearchScope, MemoryStoreResult,
+    MemoryMaintenanceAction, MemoryMaintenanceRequest, MemoryMaintenanceWindow, MemoryNamespace,
+    MemoryOperationError, MemoryProvenance, MemoryRequestContext, MemorySearchRequest,
+    MemorySearchResult, MemorySearchScope, MemoryStoreResult,
 };
 use serde::{Deserialize, Serialize};
 
@@ -169,6 +170,68 @@ fn content_and_provenance_validate_required_text() {
 }
 
 #[test]
+fn maintenance_window_round_trips_and_validates_bounds() {
+    let namespace = MemoryNamespace {
+        tenant_id: "tenant".into(),
+        subject_id: "subject".into(),
+        session_id: Some("session".into()),
+        agent_id: None,
+    };
+    let mut request = MemoryMaintenanceRequest {
+        context: MemoryRequestContext::new("maintenance-1").expect("valid context"),
+        namespace,
+        action: MemoryMaintenanceAction::Consolidate,
+        window: Some(MemoryMaintenanceWindow {
+            checkpoint_id: "checkpoint-2".into(),
+            previous_checkpoint_id: Some("checkpoint-1".into()),
+            query: "shared project preferences".into(),
+            scope: MemorySearchScope::Session,
+            filter: MemoryFilter::default(),
+            limit: 25,
+        }),
+        parameters: Default::default(),
+    };
+
+    request.validate().expect("valid maintenance request");
+    let encoded = serde_json::to_value(&request).expect("request should serialize");
+    let decoded: MemoryMaintenanceRequest =
+        serde_json::from_value(encoded).expect("request should deserialize");
+    assert_eq!(decoded, request);
+
+    let window = request.window.as_mut().expect("window is present");
+    window.previous_checkpoint_id = Some("checkpoint-2".into());
+    assert_eq!(
+        request
+            .validate()
+            .expect_err("a checkpoint cannot advance from itself")
+            .code,
+        MemoryErrorCode::InvalidRequest
+    );
+
+    let window = request.window.as_mut().expect("window is present");
+    window.previous_checkpoint_id = None;
+    window.limit = MAX_SEARCH_LIMIT + 1;
+    assert_eq!(
+        request
+            .validate()
+            .expect_err("an oversized window is invalid")
+            .code,
+        MemoryErrorCode::InvalidRequest
+    );
+
+    let window = request.window.as_mut().expect("window is present");
+    window.limit = 1;
+    window.query.clear();
+    assert_eq!(
+        request
+            .validate()
+            .expect_err("an empty window query is invalid")
+            .code,
+        MemoryErrorCode::InvalidRequest
+    );
+}
+
+#[test]
 fn error_helpers_keep_stable_wire_codes() {
     let errors = [
         MemoryOperationError::invalid_request("bad request"),
@@ -201,4 +264,10 @@ fn memory_contract_generates_json_schema() {
     let encoded = serde_json::to_string(&schema).expect("schema should serialize");
     assert!(encoded.contains("tenant_id"));
     assert!(encoded.contains("MemorySearchScope"));
+
+    let maintenance_schema = schemars::schema_for!(MemoryMaintenanceRequest);
+    let maintenance_encoded =
+        serde_json::to_string(&maintenance_schema).expect("schema should serialize");
+    assert!(maintenance_encoded.contains("checkpoint_id"));
+    assert!(maintenance_encoded.contains("MemoryMaintenanceWindow"));
 }

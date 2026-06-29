@@ -117,9 +117,8 @@ impl MemoryRuntime {
         &self,
         request: MemoryMaintenanceRequest,
     ) -> MemoryProviderResult<MemoryMaintenanceResult> {
+        request.validate()?;
         let context = request.context.clone();
-        context.validate()?;
-        request.namespace.validate()?;
         self.execute(&context, self.provider.maintain(request))
             .await
     }

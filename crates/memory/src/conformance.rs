@@ -291,6 +291,7 @@ async fn check_capability_agreement(
             context: context(run_id, "capability-maintenance"),
             namespace: namespace.clone(),
             action: MemoryMaintenanceAction::Reflect,
+            window: None,
             parameters: BTreeMap::new(),
         })
         .await

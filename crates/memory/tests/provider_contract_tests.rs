@@ -152,6 +152,7 @@ async fn false_capabilities_return_typed_unsupported_errors() {
             context: context("maintenance"),
             namespace: namespace.clone(),
             action: MemoryMaintenanceAction::Reflect,
+            window: None,
             parameters: BTreeMap::new(),
         })
         .await;
