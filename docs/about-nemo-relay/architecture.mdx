@@ -187,7 +187,7 @@ Choose an entry point based on who owns the real LLM or tool callback. Relay
 can apply the full managed execution pipeline only when it can wrap that
 callback.
 
-| Integration path | Callback owner | Relay entry point | Full managed execution | Authoritative guide |
+| Integration Path | Callback Owner | Relay Entry Point | Full Managed Execution | Authoritative Guide |
 | --- | --- | --- | --- | --- |
 | CLI-wrapped coding agents | The coding-agent host owns the callback. | The Relay CLI wraps the host, receives lifecycle hooks, and can route supported provider traffic. | Available only for boundaries that the host exposes to Relay; hook-only events do not run the managed pipeline. | [NeMo Relay CLI](/nemo-relay-cli/about) |
 | Direct managed SDK calls | The Rust, Python, or Node.js application owns the callback. | Managed LLM and tool helpers wrap the application callback. | Yes. | [Instrument Applications](/instrument-applications/about) |
@@ -218,10 +218,10 @@ cargo install nemo-relay-cli
 ```
 
 Gateway and CLI plugin behavior can also be activated from a project-level
-`.nemo-relay/plugins.toml` file. See
+`.nemo-relay/plugins.toml` file. Refer to
 [Installation](/getting-started/installation) for the authoritative
 prerequisites, supported versions, framework extras, and package-manager
-commands. See [Plugin Configuration Files](/build-plugins/plugin-configuration-files)
+commands. Refer to [Plugin Configuration Files](/build-plugins/plugin-configuration-files)
 for plugin file discovery and precedence.
 
 ## Runtime Outputs
@@ -231,7 +231,9 @@ consume snapshots from the same event stream, while exporters project those
 events into formats intended for other systems. A projection does not redefine
 scope ownership, middleware ordering, or provider payload semantics.
 
-| Output | Producer and consumer | Typical artifact or destination | Choose it when |
+The following table compares each output and its intended consumer.
+
+| Output | Producer and Consumer | Typical Artifact or Destination | Choose It When |
 | --- | --- | --- | --- |
 | [ATOF](/observability-plugin/atof) | The core emits events; subscribers and raw-event collectors consume them. | JSONL files or streamed raw events. | You need the canonical event shape for debugging, replay inputs, or a custom consumer. |
 | [In-process subscribers](/about-nemo-relay/concepts/subscribers) | The async dispatcher delivers event snapshots to application- or plugin-registered callbacks. | Application state, queues, or custom exporters. | Runtime-local logic should react to events without changing managed execution. |
@@ -244,6 +246,8 @@ scope ownership, middleware ordering, or provider payload semantics.
 Rust defines runtime behavior. Python and Node.js are the other primary
 supported bindings. Go, WebAssembly, and the raw C FFI are experimental,
 source-first surfaces.
+
+The following table maps repository paths to their responsibilities.
 
 | Path | Responsibility |
 | --- | --- |

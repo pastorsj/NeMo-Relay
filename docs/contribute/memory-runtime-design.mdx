@@ -57,12 +57,14 @@ The first version will not:
 
 ## Options Considered
 
+The following table compares four possible integration boundaries.
+
 | Option | Strengths | Limits | Decision |
 | --- | --- | --- | --- |
-| middleware-only vendor plugins | Fast path to one provider and natural request interception. | Repeats identity, evidence, queue, and binding behavior for every vendor; makes evaluation provider-specific. | Reject as the common contract. Vendor adapters may still install through the plugin. |
+| middleware-only vendor plugins | Fast path to one provider and natural request interception. | Repeats identity, evidence, queue, and binding behavior for every vendor; makes evaluation provider-specific. | Reject as the common contract. Vendor adapters can still install through the plugin. |
 | first-class core service | Makes memory directly available beside core scopes and middleware. | Expands the core and binding surface before semantics are proven and increases pressure to add vendor dependencies. | Defer unless the companion boundary later proves too limiting. |
 | companion memory crate plus plugin automation | Isolates a changing domain, supports direct and automatic use, reuses plugin activation, and allows conformance tests. | Requires a new workspace crate and carefully designed binding exports. | Select. |
-| subscriber-only ingestion | Keeps write processing off the hot path and supports replay from ATOF. | Cannot provide automatic pre-call retrieval and may ingest sanitized or incomplete payloads. | Retain as an optional write source, not the primary design. |
+| subscriber-only ingestion | Keeps write processing off the hot path and supports replay from ATOF. | Cannot provide automatic pre-call retrieval and can ingest sanitized or incomplete payloads. | Retain as an optional write source, not the primary design. |
 
 ## Decision
 
@@ -83,7 +85,7 @@ will remain optional extras or service adapters.
 
 ## Package and Repository Boundaries
 
-| Owner | Proposed responsibility |
+| Owner | Proposed Responsibility |
 | --- | --- |
 | `nemo-relay-types` | Serializable memory DTOs, capability declarations, operation results, and event profile data shared by core, bindings, native plugins, and worker protocols. |
 | `nemo-relay-memory` | Async provider contract, reference provider, factories, automatic policy, deterministic selection, write projection, bounded queue, maintainers, and conformance tests. |
@@ -93,7 +95,7 @@ will remain optional extras or service adapters.
 | NeMo Relay repository | DTOs, runtime and component code, supported bindings, events, conformance tests, integration documentation, and reference examples. |
 | `nemo-agent-memory` repository | Relay benchmark adapter, pinned memory-service configurations, demo backend and agent, scripted recall scenario, evaluation output, and a thin evidence UI. |
 
-The first vertical slice will not modify NeMo Agent Toolkit UI. The demo may
+The first vertical slice will not modify NeMo Agent Toolkit UI. The demo can
 reuse its interaction patterns later if a thin UI cannot communicate the
 evidence clearly. Before changing `nemo-agent-memory`, contributors must fetch
 the current remote state, read that repository's instructions, fast-forward
@@ -141,7 +143,7 @@ Identity resolution will use this precedence:
 
 If a required identity is absent, the component will emit a typed failure fact
 and apply its configured policy. Production defaults will fail closed for
-isolation. A demo may explicitly choose fail-open behavior. Concurrent-isolation
+isolation. A demo can explicitly choose fail-open behavior. Concurrent-isolation
 tests must prove that no result crosses a `tenant_id` or `subject_id` boundary.
 
 ## Automatic Retrieval and Write-Back
@@ -160,6 +162,8 @@ the triggering user turn. Stable system and developer instructions will remain
 ahead of that volatile block. Write projection will exclude tagged injected
 blocks, preventing recursive memory pollution, and will store only configured
 transcript or outcome data.
+
+The following diagram shows the proposed hot path and asynchronous handoff.
 
 <MermaidStyles />
 
@@ -185,9 +189,9 @@ flowchart LR
 
 ## ATOF Evidence and Privacy
 
-The implementation will extend the generic mark-event surface to accept an
-optional event category, category profile, and data schema. It will not add a
-memory-only event bypass.
+The implementation will extend the generic mark-event surface to accept
+optional `EventCategory`, `CategoryProfile`, and `DataSchema` values. It will
+not add a memory-only event bypass.
 
 Completed operations will emit versioned marks with category `memory`, an
 operation subtype (`retrieval`, `injection`, `citation`, `attribution`,
@@ -195,7 +199,7 @@ operation subtype (`retrieval`, `injection`, `citation`, `attribution`,
 `nemo.relay.memory.operation` version `0.1`. One operation mark will carry
 timing, status, policy, provider, a namespace reference, item references,
 ranks or scores, and correlation IDs. The managed LLM scope will remain the
-parent. Evaluation may also use the existing evaluator scope category.
+parent. Evaluation can also use the existing evaluator scope category.
 
 The default capture mode will be `references`: stable IDs, hashes, lengths,
 scores, and provenance without raw memory or query text. Explicit
@@ -205,7 +209,7 @@ as potentially sensitive even when it contains references only.
 
 Evidence will keep these states separate:
 
-| State | What Relay can claim |
+| State | What Relay Can Claim |
 | --- | --- |
 | Retrieved | The provider returned the item. |
 | Injected | Selection placed the item in the real model request. |
@@ -243,7 +247,7 @@ Semantic memory and prompt caching will remain separate abstractions. Memory is
 durable application state; a prompt cache avoids repeated model computation.
 They will not share a storage trait or invalidation model.
 
-Memory may use Adaptive Prompt IR for codec-aware block placement, token
+Memory can use Adaptive Prompt IR for codec-aware block placement, token
 budgets, block hashes and versions, and cache diagnostics. The stable system and
 developer prefix will precede the volatile memory block when provider semantics
 allow it. Evaluations will report memory latency and quality alongside cache-read
@@ -254,7 +258,7 @@ tokens, cache-write tokens, dynamic input tokens, and prefix-change reasons.
 The first five profiles exercise different capability shapes. A profile can be
 useful without implementing fake CRUD parity.
 
-| Profile | Initial mapping | Capability pressure |
+| Profile | Initial Mapping | Capability Pressure |
 | --- | --- | --- |
 | [Mem0 OSS](https://github.com/mem0ai/mem0) | General semantic add and search using explicit user, agent, and run identity. | Baseline search/store, filters, update/delete discovery, and sync-to-async adaptation. |
 | [Graphiti OSS](https://github.com/getzep/graphiti) | Temporal graph episodes, evolving facts, and provenance. | Episode ingestion, time-aware retrieval, graph metadata, and capability-specific deletion or maintenance. Graphiti OSS is distinct from managed Zep. |
@@ -276,14 +280,16 @@ data and harness references. Vendor-reported scores are research context, not
 Relay acceptance targets. Reports will make prompt-cache effects visible beside
 memory quality and latency.
 
-| Dimension | Metrics or checks |
+The following table defines the initial evaluation dimensions.
+
+| Dimension | Metrics or Checks |
 | --- | --- |
 | Retrieval | Recall@k, Precision@k, MRR, nDCG, duplicate rate, and stale-item rate. |
 | Answer quality | Task accuracy or judge score, memory-on versus memory-off delta, and paired ablation where causal attribution matters. |
 | Explainability | Retrieved/injected/cited/attributed event completeness, attribution precision, and correlation integrity. |
 | Write behavior | Write correctness, injected-block exclusion, idempotency, queue durability, drain success, and staleness until searchable. |
 | Isolation and privacy | Concurrent cross-tenant leakage tests, missing-identity behavior, raw-content capture checks, and privacy leakage rate. |
-| Performance | Search and end-to-end p50/p95 latency, timeout rate, queue depth, dynamic tokens, and cost. |
+| Performance | Search latency, p50/p95 memory overhead compared with a memory-off baseline, timeout rate, queue depth, dynamic tokens, and cost. |
 | Prompt cache effects | Cache-read and cache-write token changes, stable-prefix hit rate, and memory block hash/version churn. |
 
 Every reported run will pin the dataset hash, harness revision, model, prompt
@@ -292,6 +298,8 @@ latency, tokens, and cost. Phase plans will trace results to the milestone's 42
 requirements rather than relying on a single aggregate benchmark score.
 
 ## Staged Landing
+
+Implement and validate the proposal in the following order:
 
 1. Freeze neutral DTOs, provider capabilities, identity, and event examples.
 2. Add `nemo-relay-memory`, an in-memory reference provider, and conformance
