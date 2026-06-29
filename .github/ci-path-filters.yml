@@ -32,6 +32,8 @@ rust_package:
   - 'crates/cli/src/**'
   - 'crates/core/Cargo.toml'
   - 'crates/core/src/**'
+  - 'crates/memory/Cargo.toml'
+  - 'crates/memory/src/**'
   - 'crates/plugin/Cargo.toml'
   - 'crates/plugin/src/**'
   - 'crates/types/Cargo.toml'

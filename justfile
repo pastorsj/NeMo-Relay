@@ -454,6 +454,7 @@ changed = []
 found_workspace_version = False
 local_dependencies = (
     "nemo-relay-types",
+    "nemo-relay-memory",
     "nemo-relay-worker-proto",
     "nemo-relay-worker",
     "nemo-relay",
@@ -656,6 +657,7 @@ PY
 published_cargo_packages() {
     printf '%s\n' \
         nemo-relay-types \
+        nemo-relay-memory \
         nemo-relay-plugin \
         nemo-relay-worker-proto \
         nemo-relay-worker \
@@ -1160,9 +1162,13 @@ package-rust:
             cargo_package_args+=(--allow-dirty)
         fi
         case "$package" in
+            nemo-relay-memory)
+                cargo_package_config+=(--config 'patch.crates-io.nemo-relay-types.path="crates/types"')
+                ;;
             nemo-relay)
                 cargo_package_config+=(--config 'patch.crates-io.nemo-relay-types.path="crates/types"')
                 cargo_package_config+=(--config 'patch.crates-io.nemo-relay-plugin.path="crates/plugin"')
+                cargo_package_config+=(--config 'patch.crates-io.nemo-relay-worker-proto.path="crates/worker-proto"')
                 ;;
             nemo-relay-adaptive)
                 cargo_package_config+=(--config 'patch.crates-io.nemo-relay-types.path="crates/types"')

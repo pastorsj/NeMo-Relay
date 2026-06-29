@@ -375,6 +375,7 @@ jobs:
           version="${{ github.ref_name }}"
           packages=(
             nemo-relay-types
+            nemo-relay-memory
             nemo-relay-plugin
             nemo-relay-worker-proto
             nemo-relay-worker
