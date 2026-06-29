@@ -140,3 +140,70 @@ async def test_opt_out_and_scope_cleanup_preserve_the_normal_request():
 def test_invalid_automatic_config_is_rejected_by_native_validation():
     with pytest.raises(ValueError, match="max_items"):
         memory.InMemoryAutomaticMemory(memory.AutomaticMemoryConfig(max_candidates=1, max_items=2))
+
+
+@pytest.mark.asyncio
+async def test_background_write_back_flush_status_and_shutdown_preserve_automatic_recall():
+    events = []
+    subscribers.register("python-background-memory-events", events.append)
+    component = memory.InMemoryAutomaticMemory(
+        memory.AutomaticMemoryConfig(
+            write_delivery=memory.WriteDelivery.BACKGROUND,
+            background_queue=memory.MemoryWorkQueueConfig(
+                capacity=2,
+                max_attempts=2,
+                retry_initial_delay_millis=1,
+                retry_max_delay_millis=1,
+            ),
+        )
+    ).install(name="python-background-memory")
+    shut_down = False
+    try:
+        first_seen: list[dict] = []
+        await _turn(
+            "background-a",
+            "BACKGROUND_USER prefers a nord editor theme",
+            "Preference acknowledged",
+            first_seen,
+        )
+        assert "<relay_memory" not in json.dumps(first_seen[0])
+        assert component.background_status is not None
+        assert component.background_status["accepted_total"] == 1
+        assert await component.flush(timeout_millis=5_000) is True
+
+        second_seen: list[dict] = []
+        await _turn(
+            "background-b",
+            "Which editor theme does BACKGROUND_USER prefer?",
+            "Nord.",
+            second_seen,
+        )
+        injected = json.dumps(second_seen[0])
+        assert '<relay_memory version=\\"0.1\\">' in injected
+        assert "nord editor theme" in injected
+        assert await component.flush() is True
+
+        subscribers.flush()
+        storage_events = [event for event in events if event.name == "memory.storage"]
+        statuses = {event.data["status"] for event in storage_events}
+        assert statuses >= {"queued", "running", "stored"}
+        first_job_id = storage_events[0].data["job_id"]
+        job = component.background_job_status(first_job_id)
+        assert job is not None
+        assert job["state"] == "succeeded"
+        assert job["attempts"] == 1
+        evidence = json.dumps([event.data for event in storage_events], sort_keys=True)
+        assert "BACKGROUND_USER" not in evidence
+        assert "nord editor theme" not in evidence
+
+        with pytest.raises(ValueError, match="timeout_millis"):
+            await component.flush(timeout_millis=0)
+        assert await component.shutdown() is True
+        shut_down = True
+        assert component.background_status["accepting"] is False
+    finally:
+        if not shut_down:
+            component.close()
+            await component.shutdown()
+        subscribers.flush()
+        subscribers.deregister("python-background-memory-events")

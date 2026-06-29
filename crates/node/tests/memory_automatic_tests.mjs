@@ -144,4 +144,58 @@ describe('native reference automatic memory', () => {
   it('rejects invalid native configuration', () => {
     assert.throws(() => new InMemoryAutomaticMemory({ maxCandidates: 1, maxItems: 2 }), /max_items/);
   });
+
+  it('flushes background write-back and exposes status before deterministic shutdown', async () => {
+    const events = [];
+    relay.registerSubscriber('node-background-memory-events', (event) => events.push(event));
+    const component = new InMemoryAutomaticMemory({
+      writeDelivery: 'background',
+      backgroundQueue: {
+        capacity: 2,
+        maxAttempts: 2,
+        retryInitialDelayMillis: 1,
+        retryMaxDelayMillis: 1,
+      },
+    }).install({ name: 'node-background-memory' });
+    let shutDown = false;
+    try {
+      const firstSeen = [];
+      await turn('background-a', 'BACKGROUND_USER prefers a nord editor theme', 'Preference acknowledged', firstSeen);
+      assert.doesNotMatch(JSON.stringify(firstSeen[0]), /<relay_memory/);
+      assert.equal(component.backgroundStatus.acceptedTotal, 1);
+      assert.equal(await component.flush(), true);
+
+      const secondSeen = [];
+      await turn('background-b', 'Which editor theme does BACKGROUND_USER prefer?', 'Nord.', secondSeen);
+      const injected = secondSeen[0].content.messages.at(-1).content;
+      assert.match(injected, /<relay_memory version="0\.1">/);
+      assert.match(injected, /nord editor theme/);
+      assert.equal(await component.flush(), true);
+
+      await flushSubscriberCallbacks();
+      const storageEvents = events.filter((event) => event.name === 'memory.storage');
+      const statuses = new Set(storageEvents.map((event) => event.data.status));
+      assert.ok(statuses.has('queued'));
+      assert.ok(statuses.has('running'));
+      assert.ok(statuses.has('stored'));
+      const job = component.backgroundJobStatus(storageEvents[0].data.job_id);
+      assert.equal(job.state, 'succeeded');
+      assert.equal(job.attempts, 1);
+      const evidence = JSON.stringify(storageEvents.map((event) => event.data));
+      assert.doesNotMatch(evidence, /BACKGROUND_USER/);
+      assert.doesNotMatch(evidence, /nord editor theme/);
+
+      await assert.rejects(component.flush(0), /timeoutMillis/);
+      assert.equal(await component.shutdown(), true);
+      shutDown = true;
+      assert.equal(component.backgroundStatus.accepting, false);
+    } finally {
+      if (!shutDown) {
+        component.close();
+        await component.shutdown();
+      }
+      await flushSubscriberCallbacks();
+      relay.deregisterSubscriber('node-background-memory-events');
+    }
+  });
 });
