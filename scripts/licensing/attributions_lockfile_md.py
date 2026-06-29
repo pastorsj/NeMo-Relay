@@ -136,6 +136,17 @@ def _md_inline_safe(s: str) -> str:
     return f"`{s}`"
 
 
+def _md_code_block_safe(text: str) -> str:
+    """Indent lines that Git could mistake for unresolved conflict markers."""
+    output = []
+    for line in text.splitlines(keepends=True):
+        marker = line.rstrip("\r\n")
+        if re.fullmatch(r"(?:<{7,}|={7,}|>{7,})(?: .*)?", marker):
+            line = " " + line
+        output.append(line)
+    return "".join(output)
+
+
 def _is_unknown_value(s: str) -> bool:
     """Return true for empty metadata values and common unknown placeholders."""
     return not s.strip() or s.strip().upper() == "UNKNOWN"
@@ -232,7 +243,8 @@ def _render_python_package(
     for path_label, text in license_texts:
         parts.append(f"  - {_md_inline_safe(path_label)}:\n")
         parts.append(MARKDOWN_CODE_FENCE)
-        parts.append(text if text.endswith("\n") else text + "\n")
+        safe_text = _md_code_block_safe(text)
+        parts.append(safe_text if safe_text.endswith("\n") else safe_text + "\n")
         parts.append(MARKDOWN_CODE_BLOCK_END)
 
 

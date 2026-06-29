@@ -16,6 +16,8 @@ import sys
 import nemo_relay.memory_providers
 assert 'mem0' not in sys.modules
 assert 'hindsight_client' not in sys.modules
+assert 'graphiti_core' not in sys.modules
+assert 'cognee' not in sys.modules
 """
 
     subprocess.run([sys.executable, "-c", code], check=True)
@@ -23,7 +25,9 @@ assert 'hindsight_client' not in sys.modules
 
 def test_vendor_requirements_are_extra_gated():
     requirements = requires("nemo-relay") or []
-    vendor_requirements = [item for item in requirements if item.startswith(("mem0ai", "hindsight-client"))]
+    vendor_requirements = [
+        item for item in requirements if item.startswith(("cognee", "graphiti-core", "hindsight-client", "mem0ai"))
+    ]
 
-    assert len(vendor_requirements) == 2
+    assert len(vendor_requirements) == 4
     assert all("extra ==" in item for item in vendor_requirements)

@@ -14,7 +14,8 @@ NeMo Relay memory separates two ways of using memory:
   adding memory tools to the agent's reasoning loop.
 - **Direct provider adapters** implement the asynchronous Python
   `MemoryProvider` contract for explicit search, store, conformance, and
-  maintenance workflows. Mem0 OSS and Hindsight are the first adapters.
+  maintenance workflows. Mem0 OSS, Hindsight, Graphiti OSS, and Cognee are
+  implemented profiles.
 
 The provider contract always partitions data by `tenant_id` and `subject_id`.
 Optional session and agent identity can narrow a search, but cannot broaden it.

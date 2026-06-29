@@ -291,7 +291,11 @@ class _GraphitiSdkClient:
             episode_ranks: OrderedDict[str, int] = OrderedDict()
             for rank, edge in enumerate(ranked_edges, 1):
                 for episode_id in edge.episodes:
+                    if episode_id not in episode_ranks and len(episode_ranks) == num_results:
+                        break
                     episode_ranks.setdefault(episode_id, rank)
+                if len(episode_ranks) == num_results:
+                    break
             if not episode_ranks:
                 return ()
             episodes = await self._episodic_node_type.get_by_uuids(

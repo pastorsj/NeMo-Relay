@@ -30,6 +30,7 @@ shared runtime for scopes, policy, plugins, and lifecycle events.
 | Observe Codex, Claude Code, Cursor, or Hermes locally via CLI | [Quick Start CLI](https://docs.nvidia.com/nemo/relay/nemo-relay-cli/about) |
 | Instrument app-owned LLM or tool calls | [Quick Start Application](https://docs.nvidia.com/nemo/relay/getting-started/quick-start) |
 | Use LangChain, LangGraph, Deep Agents, or OpenClaw | [Supported Integrations](https://docs.nvidia.com/nemo/relay/supported-integrations/about) |
+| Add provider-neutral memory or compare OSS memory providers | [Memory](docs/memory/about.mdx) |
 | Build a framework or provider integration | [Integrate into Frameworks](https://docs.nvidia.com/nemo/relay/integrate-into-frameworks/about) |
 | Export ATOF, ATIF, OpenTelemetry, or OpenInference | [Observability Plugin](https://docs.nvidia.com/nemo/relay/observability-plugin/about) |
 | Package reusable middleware or exporters | [Build Plugins](https://docs.nvidia.com/nemo/relay/build-plugins/about) |
@@ -221,6 +222,9 @@ Relay gives those systems:
   route, retry, or replace execution.
 - **Plugins** so reusable observability, guardrail, adaptive, and exporter
   behavior can be turned on from configuration.
+- **Memory** so applications can use a provider-neutral contract, automatic
+  reference memory, or optional Mem0, Hindsight, Graphiti OSS, and Cognee
+  adapters while keeping retrieval and write evidence distinct.
 - **Events and subscribers** so raw ATOF, normalized ATIF, OpenTelemetry, and
   OpenInference output all come from the same runtime stream.
 

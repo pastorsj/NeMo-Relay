@@ -367,18 +367,18 @@ class _CogneeSdkClient:
         )
         output: list[CogneeRecallHit] = []
         for result in results:
-            metadata = _object_mapping(getattr(result, "metadata", {}))
-            raw = _object_mapping(getattr(result, "raw", {}))
+            metadata = _object_mapping(_object_field(result, "metadata", {}))
+            raw = _object_mapping(_object_field(result, "raw", {}))
             raw_data_id = metadata.get("data_id", raw.get("document_id"))
             try:
                 data_id = UUID(str(raw_data_id))
             except (TypeError, ValueError):
                 raise ValueError("Cognee CHUNKS result has no valid data_id")
-            score = getattr(result, "score", None)
+            score = _object_field(result, "score", None)
             output.append(
                 CogneeRecallHit(
                     data_id=data_id,
-                    text=str(getattr(result, "text", "")),
+                    text=str(_object_field(result, "text", "")),
                     chunk_id=_optional_string(metadata.get("chunk_id", raw.get("id"))),
                     vendor_score=float(score)
                     if isinstance(score, int | float) and not isinstance(score, bool)
@@ -395,20 +395,20 @@ class _CogneeSdkClient:
         if not data_ids:
             return ()
         datasets = await self._cognee.datasets.list_datasets()
-        dataset = next((item for item in datasets if getattr(item, "name", None) == dataset_name), None)
+        dataset = next((item for item in datasets if _object_field(item, "name", None) == dataset_name), None)
         if dataset is None:
             return ()
         wanted = set(data_ids)
-        records = await self._cognee.datasets.list_data(getattr(dataset, "id"))
+        records = await self._cognee.datasets.list_data(_object_field(dataset, "id", None))
         output: list[CogneeDataSnapshot] = []
         for record in records:
             try:
-                data_id = UUID(str(getattr(record, "id", None)))
+                data_id = UUID(str(_object_field(record, "id", None)))
             except (TypeError, ValueError):
                 continue
             if data_id not in wanted:
                 continue
-            metadata = _object_mapping(getattr(record, "external_metadata", {}))
+            metadata = _object_mapping(_object_field(record, "external_metadata", {}))
             output.append(CogneeDataSnapshot(data_id, metadata))
         return tuple(output)
 
@@ -484,6 +484,12 @@ def _object_mapping(value: object) -> Mapping[str, object]:
     if isinstance(value, Mapping):
         return cast(Mapping[str, object], value)
     return {}
+
+
+def _object_field(value: object, name: str, default: object) -> object:
+    if isinstance(value, Mapping):
+        return cast(Mapping[str, object], value).get(name, default)
+    return getattr(value, name, default)
 
 
 def _optional_string(value: object) -> str | None:

@@ -45,10 +45,13 @@ The shipped surface includes the following pieces:
   in-memory provider
 - Typed Python and Node.js reference components at `nemo_relay.memory` and
   `nemo-relay-node/memory`
-- Optional direct Python adapters for Mem0 OSS 2.x and Hindsight 0.8 with a
-  shared supported-conformance report and no default vendor dependencies
+- Optional direct Python adapters for Mem0 OSS 2.x, Hindsight 0.8, Graphiti OSS
+  0.29, and Cognee 1.2 with a shared supported-conformance report and no
+  default vendor dependencies
 - Hindsight Reflect maintenance that retains a derived record and preserves
   exact provider evidence references
+- Graphiti episode/fact retrieval with current temporal edge evidence, plus
+  Cognee forget and Consolidate-through-improve capability profiles
 - Prompt IR classification that keeps automatic memory outside the learned
   stable cache prefix
 - Hash-only memory/cache correlation in adaptive request facts and telemetry
@@ -57,8 +60,8 @@ The shipped surface includes the following pieces:
 starts only after an application installs `MemoryComponent`,
 `InMemoryAutomaticMemory`, or the built-in `memory` plugin component. The
 following remain future work: durable/distributed queues, arbitrary Python/Node
-provider bridges into automatic execution, Graphiti/Cognee/Hivemind adapters,
-attribution and evaluation, and the agent UI demonstration. Streaming managed
+provider bridges into automatic execution, the Hivemind adapter, attribution
+and evaluation, and the agent UI demonstration. Streaming managed
 LLM calls reject visible lifecycle hooks instead of applying partial memory
 behavior.
 
@@ -159,9 +162,10 @@ Node.js exposes the same lifecycle as `backgroundStatus`,
 `backgroundJobStatus(jobId)`, `flush()`, `drain()`, and `shutdown()`. Rust uses
 the corresponding `MemoryComponent` background methods.
 
-The Python `MemoryProvider` contract now has direct Mem0 OSS and Hindsight
-implementations. Those language-defined objects cannot yet be passed to the
-native automatic component. The Node contract remains an adapter boundary.
+The Python `MemoryProvider` contract now has direct Mem0 OSS, Hindsight,
+Graphiti OSS, and Cognee implementations. Those language-defined objects cannot
+yet be passed to the native automatic component. The Node contract remains an
+adapter boundary.
 
 ## Problem and Goals
 
@@ -533,8 +537,8 @@ Implement and validate the proposal in the following order:
    drain, idempotency, and worker-plugin operation.
 5. **Complete:** Coordinate Prompt IR placement and cache diagnostics without
    merging storage abstractions.
-6. Add adapters in increasing complexity: Mem0, Hindsight, Graphiti, Cognee,
-   and Hivemind.
+6. **In progress:** Mem0, Hindsight, Graphiti OSS, and Cognee are complete;
+   Hivemind remains.
 7. Add the pinned evaluation harness and publish raw per-metric results.
 8. Build the `nemo-agent-memory` scripted two-session agent and thin evidence UI
    showing automatic recall, storage, evidence states, and a memory-off baseline.
