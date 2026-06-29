@@ -341,6 +341,8 @@ fn event_categories_round_trip_all_scope_variants() {
     let vendor_category = EventCategory::new("vendor.special");
     assert_eq!(vendor_category.as_str(), "vendor.special");
     assert_eq!(vendor_category.to_scope_type(), ScopeType::Unknown);
+    assert_eq!(EventCategory::memory().as_str(), "memory");
+    assert_eq!(EventCategory::memory().to_scope_type(), ScopeType::Unknown);
 }
 
 #[test]

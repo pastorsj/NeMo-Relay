@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::api::event::{BaseEvent, MarkEvent};
+use crate::api::event::{CategoryProfile, DataSchema, EventCategory};
+use crate::api::llm::LlmHandle;
 use crate::api::runtime::NemoRelayContextState;
 use crate::api::runtime::global_context;
 use crate::api::runtime::{
@@ -147,12 +149,25 @@ pub struct EmitMarkEventParams<'a> {
     /// Optional explicit parent scope.
     #[builder(default)]
     pub parent: Option<&'a ScopeHandle>,
+    /// Optional explicit LLM parent. This is mutually exclusive with
+    /// [`EmitMarkEventParams::parent`].
+    #[builder(default)]
+    pub llm_parent: Option<&'a LlmHandle>,
     /// Optional JSON payload recorded as the mark data.
     #[builder(default)]
     pub data: Option<Json>,
     /// Optional JSON metadata recorded on the emitted event.
     #[builder(default)]
     pub metadata: Option<Json>,
+    /// Optional semantic category for the mark.
+    #[builder(default)]
+    pub category: Option<EventCategory>,
+    /// Optional category-specific profile fields.
+    #[builder(default)]
+    pub category_profile: Option<CategoryProfile>,
+    /// Optional schema identifier for the mark's data payload.
+    #[builder(default)]
+    pub data_schema: Option<DataSchema>,
     /// Optional timestamp recorded on the emitted mark event. When omitted, the
     /// current UTC time is used.
     #[builder(default)]
@@ -293,7 +308,8 @@ pub fn pop_scope(params: PopScopeParams<'_>) -> Result<()> {
     Ok(())
 }
 
-/// Emit a standalone mark event under the current or provided scope.
+/// Emit a standalone mark event under the current scope or an explicit scope
+/// or LLM parent.
 ///
 /// This creates a point-in-time lifecycle event without pushing or popping a
 /// new scope.
@@ -302,8 +318,13 @@ pub fn pop_scope(params: PopScopeParams<'_>) -> Result<()> {
 /// - `name`: Event name to emit.
 /// - `parent`: Optional explicit parent scope. When `None`, the current top of
 ///   stack is used.
+/// - `llm_parent`: Optional explicit parent LLM call. Mutually exclusive with
+///   `parent`.
 /// - `data`: Optional JSON payload recorded on the emitted event.
 /// - `metadata`: Optional JSON metadata recorded on the emitted event.
+/// - `category`: Optional semantic event category.
+/// - `category_profile`: Optional category-specific fields.
+/// - `data_schema`: Optional schema identifier for `data`.
 /// - `timestamp`: Optional timestamp recorded on the emitted mark event. When
 ///   `None`, the current UTC time is used.
 ///
@@ -311,15 +332,23 @@ pub fn pop_scope(params: PopScopeParams<'_>) -> Result<()> {
 /// A [`Result`] that is `Ok(())` after the event has been emitted.
 ///
 /// # Errors
-/// Returns an error when the runtime owner check fails or when internal state
-/// cannot be read safely.
+/// Returns an error when both explicit parent forms are supplied, the runtime
+/// owner check fails, or internal state cannot be read safely.
 ///
 /// # Notes
 /// Scope-local subscribers attached to ancestor scopes observe the emitted
 /// mark event just like scope, tool, and LLM lifecycle events.
 pub fn event(params: EmitMarkEventParams<'_>) -> Result<()> {
     ensure_runtime_owner()?;
-    let parent_uuid = resolve_parent_uuid(params.parent);
+    if params.parent.is_some() && params.llm_parent.is_some() {
+        return Err(FlowError::InvalidArgument(
+            "mark event cannot have both a scope parent and an LLM parent".into(),
+        ));
+    }
+    let parent_uuid = params
+        .llm_parent
+        .map(|handle| handle.uuid)
+        .or_else(|| resolve_parent_uuid(params.parent));
     let (event, subscribers) = {
         let scope_stack = current_scope_stack();
         let scope_guard = scope_stack.read().expect("scope stack lock poisoned");
@@ -335,10 +364,11 @@ pub fn event(params: EmitMarkEventParams<'_>) -> Result<()> {
                 .parent_uuid_opt(parent_uuid)
                 .timestamp(params.timestamp.unwrap_or_else(Utc::now))
                 .data_opt(params.data)
+                .data_schema_opt(params.data_schema)
                 .metadata_opt(params.metadata)
                 .build(),
-            None,
-            None,
+            params.category,
+            params.category_profile,
         ));
         (event, subscribers)
     };

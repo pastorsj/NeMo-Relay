@@ -124,6 +124,14 @@ impl EventCategory {
         Self("evaluator".into())
     }
 
+    /// Memory retrieval, injection, storage, or maintenance work.
+    ///
+    /// # Returns
+    /// An [`EventCategory`] with the wire value `memory`.
+    pub fn memory() -> Self {
+        Self("memory".into())
+    }
+
     /// Vendor-defined custom category.
     ///
     /// # Returns

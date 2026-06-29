@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, TimeDelta, Utc};
 use futures::StreamExt;
-use nemo_relay::api::event::{Event, ScopeCategory};
+use nemo_relay::api::event::{CategoryProfile, DataSchema, Event, EventCategory, ScopeCategory};
 use nemo_relay::api::llm::{LlmAttributes, LlmRequest};
 use nemo_relay::api::llm::{
     LlmCallExecuteParams, LlmCallParams, LlmStreamCallExecuteParams, llm_call, llm_call_end,
@@ -127,6 +127,117 @@ fn shared_type_reexports_keep_existing_core_paths() {
     assert_eq!(scope_type.as_str(), "agent");
     let attributes: ToolAttributes = nemo_relay_types::api::tool::ToolAttributes::REMOTE;
     assert!(attributes.contains(ToolAttributes::REMOTE));
+}
+
+#[test]
+fn categorized_mark_can_use_an_llm_parent() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    reset_global();
+    setup_isolated_thread();
+
+    let events = capture_events("categorized-mark-events");
+    let request = make_llm_request(json!({"messages": []}));
+    let llm_handle = llm_call(
+        LlmCallParams::builder()
+            .name("categorized-mark-parent")
+            .request(&request)
+            .build(),
+    )
+    .unwrap();
+    event(
+        nemo_relay::api::scope::EmitMarkEventParams::builder()
+            .name("memory-retrieval")
+            .llm_parent(&llm_handle)
+            .data(json!({"memory_ids": ["memory-1"]}))
+            .data_schema(
+                DataSchema::builder()
+                    .name("nemo.relay.memory.operation")
+                    .version("0.1")
+                    .build(),
+            )
+            .category(EventCategory::memory())
+            .category_profile(
+                CategoryProfile::builder()
+                    .subtype("retrieval")
+                    .extra(std::collections::BTreeMap::from([(
+                        "provider".to_string(),
+                        json!("in_memory"),
+                    )]))
+                    .build(),
+            )
+            .build(),
+    )
+    .unwrap();
+    llm_call_end(
+        nemo_relay::api::llm::LlmCallEndParams::builder()
+            .handle(&llm_handle)
+            .response(json!({"ok": true}))
+            .build(),
+    )
+    .unwrap();
+
+    let captured = captured_events_snapshot(&events);
+    let mark = captured
+        .iter()
+        .find(|event| event.name() == "memory-retrieval")
+        .unwrap();
+    assert_eq!(mark.parent_uuid(), Some(llm_handle.uuid));
+    assert_eq!(mark.category(), Some(&EventCategory::memory()));
+    assert_eq!(mark.data().unwrap()["memory_ids"], json!(["memory-1"]));
+    let wire = mark.to_json_value();
+    assert_eq!(wire["data_schema"]["name"], "nemo.relay.memory.operation");
+    assert_eq!(wire["data_schema"]["version"], "0.1");
+    assert_eq!(wire["category_profile"]["subtype"], "retrieval");
+    assert_eq!(wire["category_profile"]["provider"], "in_memory");
+
+    deregister_subscriber("categorized-mark-events").unwrap();
+}
+
+#[test]
+fn mark_rejects_two_explicit_parents() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    reset_global();
+    setup_isolated_thread();
+
+    let scope_handle = push_scope(
+        nemo_relay::api::scope::PushScopeParams::builder()
+            .name("mark-scope-parent")
+            .scope_type(ScopeType::Agent)
+            .build(),
+    )
+    .unwrap();
+    let request = make_llm_request(json!({"messages": []}));
+    let llm_handle = llm_call(
+        LlmCallParams::builder()
+            .name("mark-llm-parent")
+            .request(&request)
+            .build(),
+    )
+    .unwrap();
+
+    let error = event(
+        nemo_relay::api::scope::EmitMarkEventParams::builder()
+            .name("invalid-parent-mark")
+            .parent(&scope_handle)
+            .llm_parent(&llm_handle)
+            .build(),
+    )
+    .unwrap_err();
+    assert!(matches!(error, FlowError::InvalidArgument(_)));
+
+    llm_call_end(
+        nemo_relay::api::llm::LlmCallEndParams::builder()
+            .handle(&llm_handle)
+            .response(json!({"ok": true}))
+            .build(),
+    )
+    .unwrap();
+    pop_scope(
+        nemo_relay::api::scope::PopScopeParams::builder()
+            .handle_uuid(&scope_handle.uuid)
+            .build(),
+    )
+    .unwrap();
 }
 
 #[test]
