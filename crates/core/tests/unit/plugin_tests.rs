@@ -27,6 +27,25 @@ struct RestoreBreakPlugin;
 struct PartialFailPlugin;
 struct VanishingPlugin;
 
+struct NoopLifecycleHook;
+
+impl crate::api::runtime::LlmLifecycleHook for NoopLifecycleHook {
+    fn prepare<'a>(
+        &'a self,
+        _context: &'a crate::api::runtime::LlmLifecycleContext,
+        request: crate::api::runtime::LlmLifecycleRequest,
+    ) -> Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = crate::error::Result<crate::api::runtime::LlmLifecycleRequest>,
+                > + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move { Ok(request) })
+    }
+}
+
 static RECORDED_NAMES: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 static PARTIAL_FAIL_ROLLBACKS: AtomicUsize = AtomicUsize::new(0);
 static RESTORE_FAIL_REGISTRATIONS: AtomicUsize = AtomicUsize::new(0);
@@ -772,6 +791,8 @@ fn test_plugin_registration_context_covers_all_registration_helpers() {
         Arc::new(|_name, request, _next| Box::pin(async move { Ok(request.content) })),
     )
     .unwrap();
+    ctx.register_llm_lifecycle_hook("llm-lifecycle", 1, Arc::new(NoopLifecycleHook))
+        .unwrap();
     ctx.register_llm_stream_execution_intercept(
         "llm-stream",
         1,
@@ -799,6 +820,7 @@ fn test_plugin_registration_context_covers_all_registration_helpers() {
             "demo::tool-exec",
             "demo::llm-request",
             "demo::llm-exec",
+            "demo::llm-lifecycle",
             "demo::llm-stream",
         ]
     );

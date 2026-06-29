@@ -9,19 +9,24 @@
 
 #![allow(clippy::await_holding_lock)]
 
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use nemo_relay::api::event::{Event, ScopeCategory};
+use nemo_relay::api::llm::{LlmCallExecuteParams, LlmRequest, llm_call_execute};
 use nemo_relay::api::registry::{
     deregister_tool_request_intercept, deregister_tool_sanitize_request_guardrail,
     register_tool_request_intercept, register_tool_sanitize_request_guardrail,
-    scope_register_tool_conditional_execution_guardrail, scope_register_tool_request_intercept,
-    scope_register_tool_sanitize_request_guardrail,
+    scope_register_llm_lifecycle_hook, scope_register_tool_conditional_execution_guardrail,
+    scope_register_tool_request_intercept, scope_register_tool_sanitize_request_guardrail,
 };
 use nemo_relay::api::runtime::NemoRelayContextState;
-use nemo_relay::api::runtime::ToolExecutionNextFn;
 use nemo_relay::api::runtime::global_context;
+use nemo_relay::api::runtime::{
+    LlmExecutionNextFn, LlmLifecycleContext, LlmLifecycleHook, LlmLifecycleRequest,
+    ToolExecutionNextFn,
+};
 use nemo_relay::api::runtime::{create_scope_stack, set_thread_scope_stack};
 use nemo_relay::api::scope::{ScopeHandle, ScopeType};
 use nemo_relay::api::scope::{pop_scope, push_scope};
@@ -29,7 +34,7 @@ use nemo_relay::api::subscriber::{
     deregister_subscriber, flush_subscribers, register_subscriber, scope_register_subscriber,
 };
 use nemo_relay::api::tool::{tool_call, tool_call_end, tool_call_execute};
-use nemo_relay::error::FlowError;
+use nemo_relay::error::{FlowError, Result};
 use serde_json::json;
 
 // All tests share the global context, so we serialize them.
@@ -58,6 +63,75 @@ fn setup_isolated_scope(name: &str) -> ScopeHandle {
 fn captured_snapshot<T: Clone>(items: &Arc<Mutex<Vec<T>>>) -> Vec<T> {
     flush_subscribers().unwrap();
     items.lock().unwrap().clone()
+}
+
+struct CountingLifecycleHook(Arc<AtomicU32>);
+
+impl LlmLifecycleHook for CountingLifecycleHook {
+    fn prepare<'a>(
+        &'a self,
+        _context: &'a LlmLifecycleContext,
+        request: LlmLifecycleRequest,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<LlmLifecycleRequest>> + Send + 'a>> {
+        Box::pin(async move {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(request)
+        })
+    }
+}
+
+fn scope_test_llm_request() -> LlmRequest {
+    LlmRequest {
+        headers: serde_json::Map::new(),
+        content: json!({"messages": []}),
+    }
+}
+
+fn scope_test_llm_callback() -> LlmExecutionNextFn {
+    Arc::new(|_| Box::pin(async { Ok(json!({"ok": true})) }))
+}
+
+#[tokio::test]
+async fn scope_local_lifecycle_hook_is_removed_when_scope_pops() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    reset_global();
+    let handle = setup_isolated_scope("scope-lifecycle-hook");
+    let calls = Arc::new(AtomicU32::new(0));
+    scope_register_llm_lifecycle_hook(
+        &handle.uuid,
+        "scope-lifecycle",
+        10,
+        Arc::new(CountingLifecycleHook(calls.clone())),
+    )
+    .unwrap();
+
+    llm_call_execute(
+        LlmCallExecuteParams::builder()
+            .name("scope-lifecycle")
+            .request(scope_test_llm_request())
+            .func(scope_test_llm_callback())
+            .build(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    pop_scope(
+        nemo_relay::api::scope::PopScopeParams::builder()
+            .handle_uuid(&handle.uuid)
+            .build(),
+    )
+    .unwrap();
+    llm_call_execute(
+        LlmCallExecuteParams::builder()
+            .name("scope-lifecycle-after-pop")
+            .request(scope_test_llm_request())
+            .func(scope_test_llm_callback())
+            .build(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
 // -----------------------------------------------------------------------
