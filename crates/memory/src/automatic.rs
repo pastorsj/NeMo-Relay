@@ -30,7 +30,10 @@ use serde_json::json;
 use crate::evidence::{
     emit_operation, error_evidence, item_evidence, namespace_reference, policy_name, render_content,
 };
-use crate::{MemoryProvider, MemoryRuntime};
+use crate::{
+    MemoryJobState, MemoryJobStatus, MemoryProvider, MemoryRuntime, MemoryWorkObserver,
+    MemoryWorkQueue, MemoryWorkQueueConfig, MemoryWorkQueueSnapshot, MemoryWorkTransition,
+};
 
 const MEMORY_BLOCK_START: &str = "<relay_memory version=\"0.1\">";
 const MEMORY_BLOCK_END: &str = "</relay_memory>";
@@ -67,6 +70,17 @@ pub enum WriteProjection {
     UserAndAssistant,
 }
 
+/// Delivery path for completed-turn write-back.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WriteDelivery {
+    /// Await provider storage before managed lifecycle completion returns.
+    #[default]
+    Inline,
+    /// Admit storage to the bounded local queue and return before execution.
+    Background,
+}
+
 /// Policy and identity configuration for automatic memory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -91,6 +105,10 @@ pub struct AutomaticMemoryConfig {
     pub storage_policy: FailurePolicy,
     /// Completed-turn projection written to the provider.
     pub write_projection: WriteProjection,
+    /// Inline or bounded background write-back.
+    pub write_delivery: WriteDelivery,
+    /// Queue policy used only when `write_delivery` is `background`.
+    pub background_queue: MemoryWorkQueueConfig,
     /// Evidence content capture mode.
     pub evidence_mode: EvidenceMode,
 }
@@ -108,6 +126,8 @@ impl Default for AutomaticMemoryConfig {
             retrieval_policy: FailurePolicy::FailOpen,
             storage_policy: FailurePolicy::FailOpen,
             write_projection: WriteProjection::UserAndAssistant,
+            write_delivery: WriteDelivery::Inline,
+            background_queue: MemoryWorkQueueConfig::default(),
             evidence_mode: EvidenceMode::References,
         }
     }
@@ -140,6 +160,9 @@ impl AutomaticMemoryConfig {
             namespace.validate()?;
             self.search_scope.validate(namespace)?;
         }
+        if self.write_delivery == WriteDelivery::Background {
+            self.background_queue.validate()?;
+        }
         Ok(())
     }
 }
@@ -165,10 +188,18 @@ impl MemoryComponent {
         config: AutomaticMemoryConfig,
     ) -> Result<Self, MemoryOperationError> {
         config.validate()?;
+        let queue = match config.write_delivery {
+            WriteDelivery::Inline => None,
+            WriteDelivery::Background => Some(MemoryWorkQueue::new(
+                runtime.clone(),
+                config.background_queue.clone(),
+            )?),
+        };
         Ok(Self {
             hook: Arc::new(AutomaticMemoryHook {
                 runtime,
                 config,
+                queue,
                 turns: Mutex::new(HashMap::new()),
             }),
         })
@@ -219,6 +250,52 @@ impl MemoryComponent {
             .len()
     }
 
+    /// Return aggregate background state, or `None` for inline delivery.
+    pub fn background_snapshot(&self) -> Option<MemoryWorkQueueSnapshot> {
+        self.hook.queue.as_ref().map(MemoryWorkQueue::snapshot)
+    }
+
+    /// Return retained state for one background job.
+    pub fn background_job(&self, job_id: &str) -> Option<MemoryJobStatus> {
+        self.hook.queue.as_ref().and_then(|queue| queue.job(job_id))
+    }
+
+    /// Flush work accepted before this call.
+    ///
+    /// Returns `false` when this component uses inline delivery.
+    pub async fn flush_background(&self, timeout: Duration) -> Result<bool, MemoryOperationError> {
+        let Some(queue) = &self.hook.queue else {
+            return Ok(false);
+        };
+        queue.flush(timeout).await?;
+        Ok(true)
+    }
+
+    /// Stop background admission and drain all accepted work.
+    ///
+    /// Returns `false` when this component uses inline delivery.
+    pub async fn drain_background(&self, timeout: Duration) -> Result<bool, MemoryOperationError> {
+        let Some(queue) = &self.hook.queue else {
+            return Ok(false);
+        };
+        queue.drain(timeout).await?;
+        Ok(true)
+    }
+
+    /// Stop, drain, and join the background worker.
+    ///
+    /// Returns `false` when this component uses inline delivery.
+    pub async fn shutdown_background(
+        &self,
+        timeout: Duration,
+    ) -> Result<bool, MemoryOperationError> {
+        let Some(queue) = &self.hook.queue else {
+            return Ok(false);
+        };
+        queue.shutdown(timeout).await?;
+        Ok(true)
+    }
+
     pub(crate) fn lifecycle_hook(&self) -> Arc<dyn LlmLifecycleHook> {
         self.hook.clone()
     }
@@ -266,6 +343,7 @@ impl Drop for MemoryInstallation {
 struct AutomaticMemoryHook {
     runtime: MemoryRuntime,
     config: AutomaticMemoryConfig,
+    queue: Option<MemoryWorkQueue>,
     turns: Mutex<HashMap<String, TurnState>>,
 }
 
@@ -550,6 +628,18 @@ impl AutomaticMemoryHook {
             metadata: BTreeMap::from([("relay_automatic".to_string(), json!(true))]),
             idempotency_key: Some(format!("llm-turn:{}", context.handle.uuid)),
         };
+        match self.config.write_delivery {
+            WriteDelivery::Inline => self.store_inline(context, &namespace, request).await,
+            WriteDelivery::Background => self.store_background(context, &namespace, request).await,
+        }
+    }
+
+    async fn store_inline(
+        &self,
+        context: &LlmLifecycleContext,
+        namespace: &MemoryNamespace,
+        request: MemoryStoreRequest,
+    ) -> FlowResult<()> {
         let started = Instant::now();
         match self.runtime.store(request).await {
             Ok(result) => {
@@ -561,7 +651,7 @@ impl AutomaticMemoryHook {
                         "operation_id": operation_id(context, "store"),
                         "llm_uuid": context.handle.uuid,
                         "provider": self.runtime.provider_name(),
-                        "namespace_ref": namespace_reference(&namespace),
+                        "namespace_ref": namespace_reference(namespace),
                         "status": "stored",
                         "policy": policy_name(self.config.storage_policy),
                         "latency_ms": duration_millis(started.elapsed()),
@@ -582,6 +672,42 @@ impl AutomaticMemoryHook {
                 match self.config.storage_policy {
                     FailurePolicy::FailOpen => Ok(()),
                     FailurePolicy::FailClosed => Err(flow_error("automatic memory storage", error)),
+                }
+            }
+        }
+    }
+
+    async fn store_background(
+        &self,
+        context: &LlmLifecycleContext,
+        namespace: &MemoryNamespace,
+        request: MemoryStoreRequest,
+    ) -> FlowResult<()> {
+        let queue = self
+            .queue
+            .as_ref()
+            .expect("background delivery creates a queue during validation");
+        let observer = Arc::new(BackgroundStorageObserver {
+            context: context.clone(),
+            provider: self.runtime.provider_name().to_string(),
+            namespace_ref: namespace_reference(namespace),
+            policy: self.config.storage_policy,
+        });
+        match queue.submit_store_observed(request, Some(observer)).await {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                emit_failure(
+                    context,
+                    self.runtime.provider_name(),
+                    "storage_admission",
+                    self.config.storage_policy,
+                    &error,
+                );
+                match self.config.storage_policy {
+                    FailurePolicy::FailOpen => Ok(()),
+                    FailurePolicy::FailClosed => {
+                        Err(flow_error("automatic memory storage admission", error))
+                    }
                 }
             }
         }
@@ -636,6 +762,48 @@ impl AutomaticMemoryHook {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .remove(&context.handle.uuid.to_string())
+    }
+}
+
+struct BackgroundStorageObserver {
+    context: LlmLifecycleContext,
+    provider: String,
+    namespace_ref: String,
+    policy: FailurePolicy,
+}
+
+impl MemoryWorkObserver for BackgroundStorageObserver {
+    fn on_transition(&self, transition: &MemoryWorkTransition) {
+        let status = match transition.state {
+            MemoryJobState::Queued => "queued",
+            MemoryJobState::Running => "running",
+            MemoryJobState::Retrying => "retrying",
+            MemoryJobState::Succeeded => "stored",
+            MemoryJobState::Failed => "failed",
+            MemoryJobState::Rejected => "rejected",
+            MemoryJobState::Cancelled => "cancelled",
+        };
+        let outcome = transition.outcome.as_ref();
+        let _ = emit_operation(
+            &self.context,
+            "storage",
+            &self.provider,
+            json!({
+                "operation_id": transition.job_id,
+                "job_id": transition.job_id,
+                "llm_uuid": self.context.handle.uuid,
+                "provider": self.provider,
+                "namespace_ref": self.namespace_ref,
+                "status": status,
+                "policy": policy_name(self.policy),
+                "attempt": transition.attempts,
+                "latency_ms": transition.elapsed_millis,
+                "memory_ids": outcome.map(|value| value.memory_ids.clone()).unwrap_or_default(),
+                "disposition": outcome.and_then(|value| value.disposition),
+                "partial_error_count": outcome.map_or(0, |value| value.partial_error_count),
+                "error": transition.error.as_ref().map(error_evidence),
+            }),
+        );
     }
 }
 

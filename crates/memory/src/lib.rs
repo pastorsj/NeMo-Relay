@@ -27,7 +27,7 @@ pub mod work_queue;
 #[cfg(feature = "relay")]
 pub use automatic::{
     AutomaticMemoryConfig, EvidenceMode, FailurePolicy, MemoryComponent, MemoryInstallation,
-    WriteProjection,
+    WriteDelivery, WriteProjection,
 };
 pub use conformance::{ConformanceCase, ConformanceReport, run_provider_conformance};
 pub use in_memory::InMemoryProvider;
