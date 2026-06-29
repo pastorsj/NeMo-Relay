@@ -6,33 +6,51 @@
 const { NativeInMemoryAutomaticMemory } = require('./index.js');
 
 const TO_WIRE_KEYS = Object.freeze({
+  acceptedTotal: 'accepted_total',
   agentId: 'agent_id',
+  attemptTimeoutMillis: 'attempt_timeout_millis',
+  backgroundQueue: 'background_queue',
   batchStore: 'batch_store',
+  cancelledTotal: 'cancelled_total',
+  enqueueTimeoutMillis: 'enqueue_timeout_millis',
   evidenceMode: 'evidence_mode',
   eventAfter: 'event_after',
   eventBefore: 'event_before',
   eventTimestamp: 'event_timestamp',
+  failedTotal: 'failed_total',
   idempotencyKey: 'idempotency_key',
   identityPolicy: 'identity_policy',
   ingestedAfter: 'ingested_after',
   ingestedAt: 'ingested_at',
   ingestedBefore: 'ingested_before',
   jobId: 'job_id',
+  lastAcceptedSequence: 'last_accepted_sequence',
+  lastTerminalSequence: 'last_terminal_sequence',
+  maxAttempts: 'max_attempts',
   maxCandidates: 'max_candidates',
   maxEstimatedTokens: 'max_estimated_tokens',
   maxItems: 'max_items',
+  memoryIds: 'memory_ids',
   operationTimeoutMillis: 'operation_timeout_millis',
   operationId: 'operation_id',
   parentMemoryIds: 'parent_memory_ids',
+  partialErrorCount: 'partial_error_count',
   partialErrors: 'partial_errors',
   providerMetadata: 'provider_metadata',
+  rejectedTotal: 'rejected_total',
+  retainedTerminalJobs: 'retained_terminal_jobs',
   retrievalPolicy: 'retrieval_policy',
+  retryInitialDelayMillis: 'retry_initial_delay_millis',
+  retryMaxDelayMillis: 'retry_max_delay_millis',
   searchScope: 'search_scope',
   sessionId: 'session_id',
   sourceIds: 'source_ids',
-  subjectId: 'subject_id',
   storagePolicy: 'storage_policy',
+  subjectId: 'subject_id',
+  succeededTotal: 'succeeded_total',
+  terminalHistoryCapacity: 'terminal_history_capacity',
   tenantId: 'tenant_id',
+  writeDelivery: 'write_delivery',
   writeProjection: 'write_projection',
 });
 
@@ -82,6 +100,23 @@ class InMemoryAutomaticMemory {
     return this.#native.activeTurns;
   }
 
+  /** Aggregate queue state, or `null` when write-back is inline. */
+  get backgroundStatus() {
+    const status = this.#native.backgroundStatus;
+    return status === null || status === undefined ? null : fromMemoryWire(status);
+  }
+
+  /**
+   * Return retained state for one background job.
+   *
+   * @param {string} jobId - Immutable queue job identifier.
+   * @returns {object | null} Retained job state when available.
+   */
+  backgroundJobStatus(jobId) {
+    const status = this.#native.backgroundJobStatus(jobId);
+    return status === null || status === undefined ? null : fromMemoryWire(status);
+  }
+
   /**
    * Install globally or on one active scope.
    *
@@ -100,6 +135,22 @@ class InMemoryAutomaticMemory {
    */
   close() {
     return this.#native.close();
+  }
+
+  /** Wait for work accepted before this call without closing admission. */
+  async flush(timeoutMillis = 5_000) {
+    return this.#native.flushBackground(timeoutMillis);
+  }
+
+  /** Stop background admission and wait for all accepted work. */
+  async drain(timeoutMillis = 5_000) {
+    return this.#native.drainBackground(timeoutMillis);
+  }
+
+  /** Deregister, drain, and join the optional background worker. */
+  async shutdown(timeoutMillis = 5_000) {
+    this.close();
+    return this.#native.shutdownBackground(timeoutMillis);
   }
 }
 

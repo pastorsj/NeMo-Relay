@@ -9,6 +9,24 @@ export type FailurePolicy = 'fail_open' | 'fail_closed';
 /** Completed-turn content written by automatic memory. */
 export type WriteProjection = 'user' | 'user_and_assistant';
 
+/** Completed-turn storage delivery path. */
+export type WriteDelivery = 'inline' | 'background';
+
+/** Admission behavior when the pending memory queue is full. */
+export type MemoryBackpressurePolicy = 'reject' | 'wait';
+
+/** Bounded local queue policy for background memory work. */
+export interface MemoryWorkQueueConfig {
+  capacity?: number;
+  backpressure?: MemoryBackpressurePolicy;
+  enqueueTimeoutMillis?: number;
+  maxAttempts?: number;
+  retryInitialDelayMillis?: number;
+  retryMaxDelayMillis?: number;
+  attemptTimeoutMillis?: number;
+  terminalHistoryCapacity?: number;
+}
+
 /** Supported evidence capture mode. */
 export type EvidenceMode = 'references';
 
@@ -52,7 +70,41 @@ export interface AutomaticMemoryConfig {
   retrievalPolicy?: FailurePolicy;
   storagePolicy?: FailurePolicy;
   writeProjection?: WriteProjection;
+  writeDelivery?: WriteDelivery;
+  backgroundQueue?: MemoryWorkQueueConfig;
   evidenceMode?: EvidenceMode;
+}
+
+/** Aggregate native background queue state. */
+export interface MemoryWorkQueueStatus {
+  accepting: boolean;
+  capacity: number;
+  queued: number;
+  running: number;
+  retrying: number;
+  acceptedTotal: number;
+  rejectedTotal: number;
+  succeededTotal: number;
+  failedTotal: number;
+  cancelledTotal: number;
+  lastAcceptedSequence: number;
+  lastTerminalSequence: number;
+  retainedTerminalJobs: number;
+}
+
+/** Retained state for one accepted background job. */
+export interface MemoryJobStatus {
+  jobId: string;
+  sequence: number;
+  kind: 'store' | 'maintenance';
+  state: 'queued' | 'running' | 'retrying' | 'succeeded' | 'failed' | 'rejected' | 'cancelled';
+  attempts: number;
+  error?: MemoryOperationError;
+  outcome?: {
+    memoryIds?: string[];
+    disposition?: MemoryStoreDisposition;
+    partialErrorCount: number;
+  };
 }
 
 /** Installation target and ordering for automatic memory. */
@@ -67,10 +119,20 @@ export declare class InMemoryAutomaticMemory {
   constructor(config?: AutomaticMemoryConfig);
   /** Number of prepared calls still awaiting lifecycle completion. */
   readonly activeTurns: number;
+  /** Aggregate queue state, or null when write-back is inline. */
+  readonly backgroundStatus: MemoryWorkQueueStatus | null;
+  /** Return retained state for one background job. */
+  backgroundJobStatus(jobId: string): MemoryJobStatus | null;
   /** Install globally, or only within `scope` when supplied. */
   install(options?: AutomaticMemoryInstallOptions): this;
   /** Deregister once and report whether a registration was removed. */
   close(): boolean;
+  /** Wait for work accepted before this call without closing admission. */
+  flush(timeoutMillis?: number): Promise<boolean>;
+  /** Stop background admission and wait for all accepted work. */
+  drain(timeoutMillis?: number): Promise<boolean>;
+  /** Deregister, drain, and join the optional background worker. */
+  shutdown(timeoutMillis?: number): Promise<boolean>;
 }
 
 /** Namespace fields used to narrow a search. */
