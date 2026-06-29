@@ -134,6 +134,23 @@ def test_maintenance_request_round_trip_and_validation():
         invalid.to_dict()
 
 
+def test_delete_request_and_result_round_trip_and_validation():
+    request = memory.MemoryDeleteRequest(
+        context=memory.MemoryRequestContext("delete-1"),
+        namespace=memory.MemoryNamespace("tenant", "subject"),
+        id="record-1",
+    )
+    result = memory.MemoryDeleteResult(id=request.id, deleted=True)
+
+    assert memory.MemoryDeleteRequest.from_dict(request.to_dict()) == request
+    assert memory.MemoryDeleteResult.from_dict(result.to_dict()) == result
+
+    with pytest.raises(memory.MemoryContractError, match="memory id"):
+        memory.MemoryDeleteRequest(request.context, request.namespace, " ").to_dict()
+    with pytest.raises(memory.MemoryContractError, match="boolean"):
+        memory.MemoryDeleteResult.from_dict({"id": "record-1", "deleted": 1})
+
+
 def test_provider_error_retains_canonical_failure():
     failure = memory.MemoryOperationError(
         code=memory.MemoryErrorCode.PROVIDER_UNAVAILABLE,

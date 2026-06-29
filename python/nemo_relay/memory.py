@@ -596,6 +596,54 @@ class MemoryStoreResult:
 
 
 @dataclass(frozen=True, slots=True)
+class MemoryDeleteRequest:
+    """Delete request for a provider that advertises delete capability."""
+
+    context: MemoryRequestContext
+    namespace: MemoryNamespace
+    id: str
+
+    def validate(self) -> None:
+        """Validate operation context, identity partition, and record ID."""
+        self.context.validate()
+        self.namespace.validate()
+        _validate_identifier("memory id", self.id)
+
+    @classmethod
+    def from_dict(cls, data: JsonObject) -> MemoryDeleteRequest:
+        """Decode and validate a delete request from canonical wire data."""
+        request = cls(
+            context=MemoryRequestContext.from_dict(_require_object(data, "context")),
+            namespace=MemoryNamespace.from_dict(_require_object(data, "namespace")),
+            id=_require_str(data, "id"),
+        )
+        request.validate()
+        return request
+
+    def to_dict(self) -> JsonObject:
+        """Encode this request to canonical wire data."""
+        self.validate()
+        return cast(JsonObject, _to_wire(self))
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryDeleteResult:
+    """Result of a provider delete operation."""
+
+    id: str
+    deleted: bool
+
+    @classmethod
+    def from_dict(cls, data: JsonObject) -> MemoryDeleteResult:
+        """Decode a delete result from canonical wire data."""
+        return cls(id=_require_str(data, "id"), deleted=_require_bool(data, "deleted"))
+
+    def to_dict(self) -> JsonObject:
+        """Encode this result to canonical wire data."""
+        return cast(JsonObject, _to_wire(self))
+
+
+@dataclass(frozen=True, slots=True)
 class MemoryCapabilities:
     """Optional capabilities advertised by a memory provider."""
 
@@ -880,6 +928,13 @@ def _require_int(data: JsonObject, key: str) -> int:
     return value
 
 
+def _require_bool(data: JsonObject, key: str) -> bool:
+    value = data.get(key)
+    if not isinstance(value, bool):
+        _raise_invalid(f"{key} must be a boolean")
+    return value
+
+
 __all__ = [
     "AutomaticMemoryConfig",
     "DEFAULT_SEARCH_LIMIT",
@@ -890,6 +945,8 @@ __all__ = [
     "MemoryCapabilities",
     "MemoryContent",
     "MemoryContractError",
+    "MemoryDeleteRequest",
+    "MemoryDeleteResult",
     "MemoryErrorCode",
     "MemoryFilter",
     "MemoryMaintenanceAction",

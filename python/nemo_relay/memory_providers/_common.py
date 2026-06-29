@@ -376,6 +376,36 @@ class IdempotencyLedger:
         finally:
             await self._release_lock(key, lock)
 
+    async def invalidate_record(self, record_id: str) -> None:
+        """Remove replay entries for a successfully deleted record.
+
+        Existing and in-flight idempotent keys are pinned before inspection so
+        an in-flight store cannot publish a stale replay entry after deletion.
+        """
+        if not record_id.strip():
+            raise ValueError("record_id must not be empty")
+        async with self._registry_lock:
+            keys = tuple(dict.fromkeys((*self._entries.keys(), *self._locks.keys())))
+            pinned: list[tuple[tuple[str, str], asyncio.Lock]] = []
+            for key in keys:
+                current = self._locks.get(key)
+                if current is None:
+                    lock = asyncio.Lock()
+                    self._locks[key] = (lock, 1)
+                else:
+                    lock, users = current
+                    self._locks[key] = (lock, users + 1)
+                pinned.append((key, lock))
+        try:
+            for key, lock in pinned:
+                async with lock:
+                    entry = self._entries.get(key)
+                    if entry is not None and entry[1].record.id == record_id:
+                        self._entries.pop(key, None)
+        finally:
+            for key, lock in pinned:
+                await self._release_lock(key, lock)
+
     async def _lock_for(self, key: tuple[str, str]) -> asyncio.Lock:
         async with self._registry_lock:
             current = self._locks.get(key)

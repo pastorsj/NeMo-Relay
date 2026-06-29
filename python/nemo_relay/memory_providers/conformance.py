@@ -12,6 +12,8 @@ from nemo_relay.memory import (
     MemoryCapabilities,
     MemoryContent,
     MemoryContractError,
+    MemoryDeleteRequest,
+    MemoryDeleteResult,
     MemoryErrorCode,
     MemoryFilter,
     MemoryMaintenanceAction,
@@ -21,6 +23,7 @@ from nemo_relay.memory import (
     MemoryProvenance,
     MemoryProvider,
     MemoryProviderError,
+    MemoryRecord,
     MemoryRequestContext,
     MemorySearchRequest,
     MemorySearchResult,
@@ -58,7 +61,12 @@ class ConformanceReport:
         return tuple(case for case in self.cases if not case.passed)
 
 
-async def run_provider_conformance(provider: MemoryProvider, run_id: str) -> ConformanceReport:
+async def run_provider_conformance(
+    provider: MemoryProvider,
+    run_id: str,
+    *,
+    maintenance_action: MemoryMaintenanceAction = MemoryMaintenanceAction.REFLECT,
+) -> ConformanceReport:
     """Run required and advertised Python adapter cases in an isolated namespace."""
     cases: list[ConformanceCase] = []
     if not run_id.strip():
@@ -206,7 +214,7 @@ async def run_provider_conformance(provider: MemoryProvider, run_id: str) -> Con
         cases.append(_failed("typed_invalid_request", error))
 
     try:
-        await _check_capabilities(provider, run_id, origin)
+        await _check_capabilities(provider, run_id, stored.record, maintenance_action)
         cases.append(ConformanceCase("capability_agreement", True))
     except Exception as error:
         cases.append(_failed("capability_agreement", error))
@@ -214,33 +222,56 @@ async def run_provider_conformance(provider: MemoryProvider, run_id: str) -> Con
     return ConformanceReport(provider.name, run_id, tuple(cases))
 
 
-async def _check_capabilities(provider: MemoryProvider, run_id: str, namespace: MemoryNamespace) -> None:
+async def _check_capabilities(
+    provider: MemoryProvider,
+    run_id: str,
+    record: MemoryRecord,
+    maintenance_action: MemoryMaintenanceAction,
+) -> None:
     capabilities: MemoryCapabilities = provider.capabilities
     unsupported_python_profile = {
         "update": capabilities.update,
-        "delete": capabilities.delete,
         "batch_store": capabilities.batch_store,
         "feedback": capabilities.feedback,
         "health": capabilities.health,
     }
     enabled = [name for name, advertised in unsupported_python_profile.items() if advertised]
     _require(not enabled, f"Python adapter profile cannot verify advertised capabilities: {', '.join(enabled)}")
-    maintain = getattr(provider, "maintain", None)
-    if not capabilities.maintenance:
-        return
-    if not callable(maintain):
-        raise AssertionError("maintenance is advertised but maintain is absent")
-    request = MemoryMaintenanceRequest(
-        context=_context(run_id, "maintenance"),
-        namespace=namespace,
-        action=MemoryMaintenanceAction.REFLECT,
-        parameters={
-            "checkpoint_id": f"{run_id}-checkpoint",
-            "query": "Reflect on the conformance memory",
-        },
-    )
-    result = await maintain(request)
-    _require(isinstance(result, MemoryMaintenanceResult), "maintain returned the wrong result type")
+    if capabilities.maintenance:
+        maintain = getattr(provider, "maintain", None)
+        if not callable(maintain):
+            raise AssertionError("maintenance is advertised but maintain is absent")
+        request = MemoryMaintenanceRequest(
+            context=_context(run_id, "maintenance"),
+            namespace=record.namespace,
+            action=maintenance_action,
+            parameters={
+                "checkpoint_id": f"{run_id}-checkpoint",
+                "query": "Maintain the conformance memory",
+            },
+        )
+        result = await maintain(request)
+        _require(isinstance(result, MemoryMaintenanceResult), "maintain returned the wrong result type")
+    if capabilities.delete:
+        delete = getattr(provider, "delete", None)
+        if not callable(delete):
+            raise AssertionError("delete is advertised but delete is absent")
+        result = await delete(
+            MemoryDeleteRequest(
+                context=_context(run_id, "delete"),
+                namespace=record.namespace,
+                id=record.id,
+            )
+        )
+        _require(isinstance(result, MemoryDeleteResult), "delete returned the wrong result type")
+        _require(result.id == record.id and result.deleted, "delete did not remove the conformance record")
+        searched = await provider.search(
+            _search_request(run_id, "delete-verify", record.namespace, "solarized editor preference")
+        )
+        _require(
+            all(match.record.id != record.id for match in searched.matches),
+            "deleted record remained searchable",
+        )
 
 
 def _namespace(run_id: str, subject: str, session: str, agent: str) -> MemoryNamespace:

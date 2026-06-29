@@ -154,6 +154,35 @@ async def test_idempotency_ledger_replays_conflicts_and_does_not_serialize_other
     assert conflict.value.error.code is MemoryErrorCode.CONFLICT
 
 
+async def test_idempotency_ledger_invalidation_waits_for_in_flight_store():
+    ledger = IdempotencyLedger()
+    request = store_request()
+    expected, _ = prepare_record("fake", request, ingested_at=NOW)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def mutation() -> MemoryStoreResult:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            entered.set()
+            await release.wait()
+        return MemoryStoreResult(expected, MemoryStoreDisposition.CREATED)
+
+    storing = asyncio.create_task(ledger.run(request, mutation))
+    await entered.wait()
+    invalidating = asyncio.create_task(ledger.invalidate_record(expected.id))
+    await asyncio.sleep(0)
+    release.set()
+    await storing
+    await invalidating
+
+    recreated = await ledger.run(request, mutation)
+    assert recreated.disposition is MemoryStoreDisposition.CREATED
+    assert calls == 2
+
+
 async def test_idempotency_waiters_keep_one_key_lock_after_cancelled_or_failed_owner():
     ledger = IdempotencyLedger()
     request = store_request()

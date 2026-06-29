@@ -9,6 +9,11 @@ from datetime import datetime, timezone
 
 from nemo_relay.memory import (
     MemoryCapabilities,
+    MemoryDeleteRequest,
+    MemoryDeleteResult,
+    MemoryMaintenanceAction,
+    MemoryMaintenanceRequest,
+    MemoryMaintenanceResult,
     MemoryMatch,
     MemoryProvider,
     MemorySearchRequest,
@@ -59,6 +64,30 @@ class ReferenceAdapter:
         )
 
 
+class OptionalCapabilityAdapter(ReferenceAdapter):
+    capabilities = MemoryCapabilities(delete=True, maintenance=True)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.maintenance_actions: list[MemoryMaintenanceAction] = []
+
+    async def maintain(self, request: MemoryMaintenanceRequest) -> MemoryMaintenanceResult:
+        request.validate()
+        self.maintenance_actions.append(request.action)
+        return MemoryMaintenanceResult()
+
+    async def delete(self, request: MemoryDeleteRequest) -> MemoryDeleteResult:
+        request.validate()
+        before = len(self._records)
+        self._records = [
+            record for record in self._records if record.id != request.id or record.namespace != request.namespace
+        ]
+        deleted = len(self._records) != before
+        if deleted:
+            await self._ledger.invalidate_record(request.id)
+        return MemoryDeleteResult(request.id, deleted)
+
+
 async def test_reference_adapter_passes_supported_conformance():
     provider: MemoryProvider = ReferenceAdapter()
 
@@ -85,4 +114,18 @@ async def test_empty_run_id_is_reported_without_mutating_provider():
 
     assert not report.passed
     assert report.failures[0].name == "valid_run_id"
+    assert provider._records == []
+
+
+async def test_advertised_delete_and_selected_maintenance_action_are_exercised():
+    provider = OptionalCapabilityAdapter()
+
+    report = await run_provider_conformance(
+        provider,
+        "unit-optional",
+        maintenance_action=MemoryMaintenanceAction.CONSOLIDATE,
+    )
+
+    assert report.passed, [(case.name, case.message) for case in report.failures]
+    assert provider.maintenance_actions == [MemoryMaintenanceAction.CONSOLIDATE]
     assert provider._records == []
