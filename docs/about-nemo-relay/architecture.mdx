@@ -181,6 +181,49 @@ From bottom to top, NeMo Relay is organized as:
 
 The details of a binding can vary, but the conceptual model stays the same across those layers.
 
+## Integration Entry Points
+
+Choose an entry point based on who owns the real LLM or tool callback. Relay
+can apply the full managed execution pipeline only when it can wrap that
+callback.
+
+| Integration path | Callback owner | Relay entry point | Full managed execution | Authoritative guide |
+| --- | --- | --- | --- | --- |
+| CLI-wrapped coding agents | The coding-agent host owns the callback. | The Relay CLI wraps the host, receives lifecycle hooks, and can route supported provider traffic. | Available only for boundaries that the host exposes to Relay; hook-only events do not run the managed pipeline. | [NeMo Relay CLI](/nemo-relay-cli/about) |
+| Direct managed SDK calls | The Rust, Python, or Node.js application owns the callback. | Managed LLM and tool helpers wrap the application callback. | Yes. | [Instrument Applications](/instrument-applications/about) |
+| Maintained public framework integrations | The framework owns the callback; its public integration point determines whether Relay can wrap it. | A maintained adapter uses public framework APIs. | Integration-dependent. | [Supported Integrations](/supported-integrations/about) |
+| Configured in-process plugins | The host process owns callbacks and initializes Relay plugin configuration. | Plugin components install middleware, subscribers, exporters, or related runtime behavior. | Middleware receives managed semantics when the underlying call uses a managed entry point. | [Build Plugins](/build-plugins/about) |
+| Native or gRPC worker plugins | The plugin implementation owns its native or worker-process behavior; the instrumented host still owns application callbacks. | The plugin runtime loads a native component or communicates with a gRPC worker. | Limited to the behavior and callback boundary exposed through the plugin interface. | [Plugin Configuration Files](/build-plugins/plugin-configuration-files) |
+
+Framework authors who need a new wrapper or lifecycle boundary should start
+with [Integrate into Frameworks](/integrate-into-frameworks/about).
+
+## Installation Surfaces
+
+Install the package that matches the boundary Relay needs to observe or
+control:
+
+```bash
+# Rust application SDK
+cargo add nemo-relay
+
+# Python application SDK
+uv add nemo-relay
+
+# Node.js application SDK
+npm install nemo-relay-node
+
+# Coding-agent CLI wrapper
+cargo install nemo-relay-cli
+```
+
+Gateway and CLI plugin behavior can also be activated from a project-level
+`.nemo-relay/plugins.toml` file. See
+[Installation](/getting-started/installation) for the authoritative
+prerequisites, supported versions, framework extras, and package-manager
+commands. See [Plugin Configuration Files](/build-plugins/plugin-configuration-files)
+for plugin file discovery and precedence.
+
 ## Design Goal
 
 NeMo Relay is designed so that application developers, framework integrators, plugin authors, and observability consumers all reason about the same runtime semantics. One conceptual model should remain stable even when the binding or integration style changes.
