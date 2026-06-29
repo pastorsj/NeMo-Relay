@@ -316,14 +316,19 @@ async fn identical_job_is_deduplicated_and_changed_payload_conflicts() {
     let provider = GateProvider::new();
     let queue = MemoryWorkQueue::new(MemoryRuntime::new(provider.clone()), queue_config(2))
         .expect("valid queue");
-    let request = store_request("same-job", "original");
+    let mut request = store_request("same-job", "original");
+    request.context.deadline =
+        Some(serde_json::from_str("\"2026-06-29T12:01:00Z\"").expect("valid first deadline"));
     let first = queue
         .submit_store(request.clone())
         .await
         .expect("first accepted");
     wait_for_state(&queue, "same-job", MemoryJobState::Running).await;
+    let mut replay = request;
+    replay.context.deadline =
+        Some(serde_json::from_str("\"2026-06-29T12:02:00Z\"").expect("valid replay deadline"));
     let duplicate = queue
-        .submit_store(request)
+        .submit_store(replay)
         .await
         .expect("identical replay returns retained receipt");
     assert_eq!(duplicate.sequence, first.sequence);

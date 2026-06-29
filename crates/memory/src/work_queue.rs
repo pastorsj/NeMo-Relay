@@ -307,6 +307,10 @@ impl MemoryWorkQueue {
     ) -> Result<MemoryWorkReceipt, MemoryOperationError> {
         request.validate()?;
         let job_id = request.context.operation_id.clone();
+        // The queue owns per-attempt deadlines. Exclude any caller deadline
+        // from immutable payload identity so a replay with the same semantic
+        // work does not conflict merely because time advanced.
+        request.context.deadline = None;
         if request.idempotency_key.is_none() {
             request.idempotency_key = Some(format!("memory-work:{job_id}"));
         }
@@ -324,10 +328,11 @@ impl MemoryWorkQueue {
     /// Submit maintenance and observe its state transitions.
     pub async fn submit_maintenance_observed(
         &self,
-        request: MemoryMaintenanceRequest,
+        mut request: MemoryMaintenanceRequest,
         observer: Option<Arc<dyn MemoryWorkObserver>>,
     ) -> Result<MemoryWorkReceipt, MemoryOperationError> {
         request.validate()?;
+        request.context.deadline = None;
         self.submit(WorkPayload::Maintenance(request), observer)
             .await
     }
