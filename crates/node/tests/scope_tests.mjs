@@ -15,6 +15,8 @@ const {
   event,
   withScope,
   toolCallExecute,
+  llmCall,
+  llmCallEnd,
   llmCallExecute,
   registerSubscriber,
   deregisterSubscriber,
@@ -113,6 +115,40 @@ describe('Scope operations', () => {
       assert.deepEqual(end.metadata, { a: 1, b: 2, c: 3.5, d: 4 });
     } finally {
       deregisterSubscriber('node_scope_pop_metadata_sub');
+    }
+  });
+
+  it('emits a categorized mark under an LLM parent', async () => {
+    const events = [];
+    registerSubscriber('node_categorized_mark_sub', (e) => events.push(e));
+    try {
+      const llmHandle = llmCall('node-mark-parent', {
+        headers: {},
+        content: { messages: [] },
+      });
+      event(
+        'memory-retrieval',
+        null,
+        { memory_ids: ['memory-1'] },
+        null,
+        null,
+        llmHandle,
+        'memory',
+        { subtype: 'retrieval', provider: 'in_memory' },
+        { name: 'nemo.relay.memory.operation', version: '0.1' },
+      );
+      llmCallEnd(llmHandle, { ok: true });
+      await flushSubscriberCallbacks();
+
+      const mark = events.find((candidate) => candidate.name === 'memory-retrieval');
+      assert.ok(mark, 'expected categorized mark');
+      assert.equal(mark.parent_uuid, llmHandle.uuid);
+      assert.equal(mark.category, 'memory');
+      assert.deepEqual(mark.category_profile, { subtype: 'retrieval', provider: 'in_memory' });
+      assert.deepEqual(mark.data_schema, { name: 'nemo.relay.memory.operation', version: '0.1' });
+      assert.deepEqual(mark.data, { memory_ids: ['memory-1'] });
+    } finally {
+      deregisterSubscriber('node_categorized_mark_sub');
     }
   });
 });
@@ -333,14 +369,14 @@ describe('Events', () => {
 
 describe('Subscribers', () => {
   it('register and deregister', () => {
-    registerSubscriber('node_sub_1', () => { });
+    registerSubscriber('node_sub_1', () => {});
     const removed = deregisterSubscriber('node_sub_1');
     assert.equal(removed, true);
   });
 
   it('duplicate subscriber fails', () => {
-    registerSubscriber('node_dup_sub', () => { });
-    assert.throws(() => registerSubscriber('node_dup_sub', () => { }));
+    registerSubscriber('node_dup_sub', () => {});
+    assert.throws(() => registerSubscriber('node_dup_sub', () => {}));
     deregisterSubscriber('node_dup_sub');
   });
 

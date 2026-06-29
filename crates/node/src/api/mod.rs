@@ -27,6 +27,7 @@ use serde::Deserialize;
 use serde_json::Value as Json;
 use tokio_stream::StreamExt;
 
+use nemo_relay::api::event::{CategoryProfile, DataSchema, EventCategory};
 use nemo_relay::api::llm as core_llm_api;
 use nemo_relay::api::llm::{LlmAttributes, LlmRequest};
 use nemo_relay::api::registry as core_registry_api;
@@ -1448,22 +1449,42 @@ pub fn with_scope(
 /// the event is associated with that scope; otherwise it uses the current top scope.
 /// Optional `timestamp` is a Unix timestamp in microseconds recorded on the mark event.
 /// It must be a safe integer number; omit it to use the current runtime time.
+/// Optional `llmHandle` associates the mark with an LLM call and is mutually exclusive
+/// with `handle`. `category`, `categoryProfile`, and `dataSchema` add canonical ATOF
+/// classification without changing subscriber delivery.
 #[napi]
+#[allow(clippy::too_many_arguments)]
 pub fn event(
     name: String,
     handle: Option<&ScopeHandle>,
     data: Option<Json>,
     metadata: Option<Json>,
     timestamp: Option<f64>,
+    llm_handle: Option<&LlmHandle>,
+    category: Option<String>,
+    category_profile: Option<Json>,
+    data_schema: Option<Json>,
 ) -> Result<()> {
     let timestamp = parse_timestamp_micros(timestamp)?;
+    let category_profile = category_profile
+        .map(serde_json::from_value::<CategoryProfile>)
+        .transpose()
+        .map_err(|error| napi::Error::from_reason(format!("invalid categoryProfile: {error}")))?;
+    let data_schema = data_schema
+        .map(serde_json::from_value::<DataSchema>)
+        .transpose()
+        .map_err(|error| napi::Error::from_reason(format!("invalid dataSchema: {error}")))?;
     core_scope_api::event(
         core_scope_api::EmitMarkEventParams::builder()
             .name(&name)
             .parent_opt(handle.map(|h| &h.inner))
+            .llm_parent_opt(llm_handle.map(|h| &h.inner))
             .data_opt(opt_json(data))
             .metadata_opt(opt_json(metadata))
             .timestamp_opt(timestamp)
+            .category_opt(category.map(EventCategory::new))
+            .category_profile_opt(category_profile)
+            .data_schema_opt(data_schema)
             .build(),
     )
     .map_err(to_napi_err)
