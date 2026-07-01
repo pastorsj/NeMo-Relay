@@ -179,6 +179,7 @@ The public package modules are:
 - `nemo_relay.scope`
 - `nemo_relay.tools`
 - `nemo_relay.llm`
+- `nemo_relay.memory`
 - `nemo_relay.guardrails`
 - `nemo_relay.intercepts`
 - `nemo_relay.subscribers`
@@ -195,6 +196,63 @@ The public package modules are:
 - `nemo_relay.integrations.deepagents`
 
 The compiled extension is exposed as `nemo_relay._native`.
+
+## Memory lifecycle listener
+
+Python applications can attach memory to normal managed LLM calls without
+adding memory tools or imports to the agent. Relay forwards two events to one
+application-owned listener:
+
+- `llm.before`, where the listener may return context attachments;
+- `llm.after`, where the listener may store or update memory and report the
+  resulting references.
+
+Relay injects returned attachments and emits `memory.retrieved`,
+`memory.injected`, and `memory.stored` marks. Stores, ranking, storage policy,
+and background maintenance remain outside Relay.
+
+```python
+from nemo_relay import plugin
+from nemo_relay.memory import (
+    MemoryAction,
+    MemoryAttachment,
+    MemoryLifecyclePhase,
+    MemoryPlugin,
+)
+
+
+class MyMemory:
+    name = "my-memory"
+
+    async def on_event(self, event):
+        if event.phase is MemoryLifecyclePhase.BEFORE_LLM:
+            matches = await search_my_store(event.context, event.request)
+            return MemoryAction(
+                attachments=tuple(
+                    MemoryAttachment(match.id, match.text, match.score)
+                    for match in matches
+                )
+            )
+        references = await store_if_useful(event.context, event.request, event.response)
+        return MemoryAction(stored_references=tuple(references))
+
+
+listener = MyMemory()
+plugin.register("memory.lifecycle", MemoryPlugin(listener))
+await plugin.initialize(
+    plugin.PluginConfig(
+        components=[plugin.ComponentSpec("memory.lifecycle")],
+    )
+)
+```
+
+Put user/session/provider identifiers in the owning Relay scope's `data` map;
+Relay forwards that map unchanged as `event.context`. An optional
+`correlation_id` is copied to memory marks for request-level inspection.
+
+The listener is the entire Relay-facing contract. A dreaming or consolidation
+process can manage the same store independently; it is not a Relay lifecycle
+method.
 
 ## Documentation
 

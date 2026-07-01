@@ -30,6 +30,7 @@ from nemo_relay import codecs as codecs
 from nemo_relay import guardrails as guardrails
 from nemo_relay import intercepts as intercepts
 from nemo_relay import llm as llm
+from nemo_relay import memory as memory
 from nemo_relay import observability as observability
 from nemo_relay import pii_redaction as pii_redaction
 from nemo_relay import plugin as plugin
